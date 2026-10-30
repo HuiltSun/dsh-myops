@@ -1,7 +1,9 @@
 # dsh-myops
 
 A small, **dependency-free** replacement for [`dsh-ops`](https://github.com/T-Auto/dsh-ops).
-It gives DSH twelve tools and needs no native binaries and no npm packages.
+It gives DSH twelve tools and needs no npm packages and no native binaries. The only
+third-party code is Mozilla **pdf.js** (Apache-2.0, vendored under
+`lib/vendor/pdfjs/` for `ops_read_pdf`; see its `PROVENANCE.md`).
 
 | Tool | Purpose |
 | --- | --- |
@@ -15,7 +17,7 @@ It gives DSH twelve tools and needs no native binaries and no npm packages.
 | `ops_result` | Page through spilled large output |
 | `ops_read_table` | CSV / TSV with quote handling |
 | `ops_read_docx` | DOCX paragraph text (no npm deps; own ZIP reader) |
-| `ops_read_pdf` | PDF text layer, best effort — returns a diagnostic instead of mojibake |
+| `ops_read_pdf` | PDF text layer via vendored **pdf.js** (built-in parser fallback); `password` for encrypted PDFs; no OCR |
 | `ops_git` | Compact Git: status / diff / log / show / branch / add / commit (no push-history rewrites) |
 
 It is a plain cordis plugin: `package.json` → `index.mjs`, which exports
@@ -61,7 +63,7 @@ backup paths, byte counts) plus the copied `dsh-myops/` folder and
 
 ```powershell
 node test/smoke.mjs   # 31 checks: registration, bash, write/edit/stat safety, dedup, glob/grep, spill paging, doc error paths
-node test/bench.mjs   # 78 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page
+node test/bench.mjs   # 81 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page, pdf.js
 ```
 
 `test/bench.mjs` also writes `test/bench-report.json`. Exit code 0 means everything passed.
@@ -207,8 +209,11 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
 - `ops_read_docx` reports encrypted/password-protected packages as
   `document is encrypted/password-protected`, and reads only `word/document.xml`
   (no headers, footers, footnotes or table structure). Legacy `.doc` is unsupported.
-- `ops_read_pdf` has no OCR and no password parameter: scanned PDFs and encrypted
-  PDFs return an explanatory `PDF text extraction unsupported …` string.
+- `ops_read_pdf` uses **Mozilla pdf.js** (vendored legacy build, `lib/vendor/pdfjs/`)
+  for the text layer: real-world fonts, line reconstruction and encrypted PDFs with
+  the `password` parameter. If pdf.js is missing or rejects the file, the built-in
+  hand-written parser runs and finally returns a readable `unsupported` message
+  instead of garbled text. Scanned/image-only PDFs are not OCR'd.
 - `ops_glob` / `ops_grep` skip `.git` and `node_modules`; symlinks are not followed.
 - `ops_glob` returns relative paths only by default. Pass `stat: true` to append
   `(size bytes, ISO mtime)` per match (one extra `stat` per file).
@@ -226,9 +231,11 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
   `--stat`, `add`/`commit` only touch explicit `paths`. Push and history-changing
   commands are intentionally left to `ops_bash`.
 - Empty files report `0 lines` consistently in both `ops_read` and `ops_stat`.
-- PDF analysis is best effort: it parses `/ToUnicode` CMaps for CID fonts and
-  **falls back to a readable "unsupported" message rather than emitting garbled
-  text**. Scanned PDFs have no text layer and are not OCR'd.
+- PDF analysis: pdf.js is vendored (Apache-2.0) with only the legacy `pdf.mjs` and
+  `pdf.worker.mjs`; its optional `cmaps/` and `standard_fonts/` data are not shipped,
+  so rarely some CJK glyphs may fall back to the hand-written parser or be
+  unreadable. Encrypted PDFs need the `password` parameter (no interactive prompt),
+  and scanned PDFs have no text layer (no OCR).
 
 - **Runtime settings + Desktop page.** `lib/settings-store.mjs` persists
   `maxOutputChars`/`bashTimeoutMs`/`hideOfficial` to `$DSH_HOME/myops-settings.json`
@@ -250,7 +257,9 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
   a readable error, not a decoded table.
 - `ops_read_docx` reads `word/document.xml` only (no headers/footers, no table
   structure); legacy `.doc` is unsupported; encrypted packages are not decrypted.
-- `ops_read_pdf` is best effort: no OCR, no password/decryption support.
+- `ops_read_pdf` needs `lib/vendor/pdfjs/pdf.mjs` + `pdf.worker.mjs` (shipped);
+  without them only the hand-written parser is used. No OCR; encrypted files need
+  an explicit `password`.
 - The settings page requires a DSH Web/Desktop profile that mounts the `webServer`
   service; on hosts without it the tools still work and settings can be edited in
   `myops-settings.json` directly. The `client.js` half only loads after a DSH

@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.5.0 — 2026-10-31
+
+### PDF：接入 Mozilla pdf.js
+
+- `ops_read_pdf` 改为优先使用 **Mozilla pdf.js**（pdfjs-dist **4.10.38** legacy build，
+  Apache-2.0，vendored 到 `lib/vendor/pdfjs/`，见其中 `PROVENANCE.md`）：真实世界
+  字体、逐行重建、加密 PDF（新 `password` 参数）均可用。
+- pdf.js 缺失/拒绝文件时回退到原有手写解析器；两者都失败才返回可读的
+  `PDF text extraction unsupported …`，不吐乱码。
+- 修复实测问题：某些真实中文 PDF（内嵌字体、手写解析器误判为 “scanned/image-only”）
+  现在能正确抽出文本；示例报告抽出 408 字符，原实现返回 unsupported。
+- 未 vendored `cmaps/` 与 `standard_fonts/`（体积取舍），少数 CJK 字形可能仍走
+  回退解析器或被判为不可读；无 OCR，加密文件需显式传 `password`。
+
+### 测试
+
+- `test/bench.mjs` 扩展到 81 项：新增 pdf.js 模块可加载、逐行重建、`password`
+  参数传递用例。
+
+---
+
 ## v1.4.0 — 2026-10-31
 
 ### 新增 Desktop 设置页

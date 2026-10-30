@@ -396,6 +396,21 @@ const PDF_CASES = [
 for (const [pdf, check] of PDF_CASES) {
   await bench('ops_read_pdf', pdf, { path: join(DOC, pdf) }, { reps: 5, check });
 }
+{
+  let pdfjsOk = false;
+  try {
+    const mod = await import('../lib/vendor/pdfjs/pdf.mjs');
+    pdfjsOk = typeof mod.getDocument === 'function';
+  } catch { /* not vendored */ }
+  checkOnly('ops_read_pdf', 'vendored pdf.js 可加载', pdfjsOk, 'pdf.js module not loadable');
+  await bench('ops_read_pdf', 'pdf.js 逐行重建', { path: join(DOC, 'simple.pdf') }, {
+    reps: 1,
+    check: (t) => (t.includes('1| Hello PDF') && t.includes('2| Second line') && t.includes('4| line three')
+      ? true : 'line reconstruction wrong'),
+  });
+  const withPassword = String(await T('ops_read_pdf').execute({ path: join(DOC, 'encrypted.pdf'), password: 'wrong' }));
+  checkOnly('ops_read_pdf', 'password 参数可传入', /unsupported|error/i.test(withPassword), withPassword.split('\n')[0]);
+}
 
 /* ------------------------------------------------------------------ */
 /* 13. ops_git（临时仓库）                                           */
@@ -615,7 +630,7 @@ SESSION_DIR = process.cwd();
     get: (name) => (name === 'workingDirectory' ? SESSION_CWD_PROVIDER : undefined),
     effect: () => {},
   };
-  apply(ctx2, { maxOutputChars: 1500 });
+  apply(ctx2, { maxOutputChars: 1500, settingsPath: join(work, 'cfg-settings.json') });
   const capped = String(await defs2.get('ops_read').execute({ path: bigTxt }, agentExec));
   checkOnly('ops_read', 'config maxOutputChars 生效', capped.length < 3000 && /full output .* id=/.test(capped),
     `chars=${capped.length}`);

@@ -2,7 +2,7 @@
 
 - **时间**：2026-10-31 03:21–03:26（Asia/Shanghai）
 - **环境**：Windows / Node v26.8.1 / Git Bash；工作区 `E:\dsh-myops`；插件 v1.1.0 已装入 desktop profile 并在当前会话注册
-- **结论**：**12/12 工具在真实会话中可用；78/78 效率/回归用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测（见文末“修复后复测”与 v1.2.0–v1.4.0 补充）。
+- **结论**：**12/12 工具在真实会话中可用；81/81 效率/回归用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测（见文末“修复后复测”与 v1.2.0–v1.5.0 补充）。
 
 ## 验证方法
 
@@ -51,7 +51,7 @@
 ## 复现
 
 ```bash
-node test/bench.mjs              # 78 项效率/回归用例，结果写 test/bench-report.json
+node test/bench.mjs              # 81 项效率/回归用例，结果写 test/bench-report.json
 npm test                         # 31 项 smoke
 cd test/doc && node selftest.mjs # 文档解析自测
 ```
@@ -76,7 +76,13 @@ cd test/doc && node selftest.mjs # 文档解析自测
 
 ### 3. 回归
 
-`node test/bench.mjs` 78/78、`node test/smoke.mjs` 31/31、`test/doc/selftest.mjs` 0 失败。
+`node test/bench.mjs` 81/81、`node test/smoke.mjs` 31/31、`test/doc/selftest.mjs` 0 失败。
+
+## v1.5.0 补充（Mozilla pdf.js）
+
+- `lib/vendor/pdfjs/` 引入 pdfjs-dist 4.10.38 legacy build（Apache-2.0，附 LICENSE/PROVENANCE），`ops_read_pdf` 优先用它，失败回退原手写解析器。
+- 新增 `password` 参数；真实中文 PDF 实测从“unsupported（误判扫描件）”变为正确抽取 408 字符；第二份真实 PDF 输出 817 字符。
+- bench 新增 3 项：pdf.js 模块可加载、逐行重建（simple.pdf → `1| Hello PDF …`）、password 参数传递；既有 6 个 fixture 的回归全部保持通过（pdf.js 拒绝的合成 PDF 仍由手写解析器给出原诊断）。
 
 ## v1.4.0 补充（Desktop 设置页）
 
