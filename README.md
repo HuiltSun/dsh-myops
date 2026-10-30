@@ -89,12 +89,13 @@ row in **the profile's** `cordis.patch.yml`
     - id: myops
       name: dsh-myops
       config:
-        hideOfficial: ['pwsh', 'read', 'glob', 'grep']
+        hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit']
 ```
 
 `hideOfficial` entries are blocked from execution and removed from the tool surface
-per agent. Use a subset if you only want to replace some of them. **Restart the
-DSH desktop app after editing** — `cordis.patch.yml` is not hot-reloaded.
+per agent. Supported: `pwsh`, `read`, `glob`, `grep`, `write`, `edit` (the six
+official tools this plugin replaces). **Restart the DSH desktop app after editing**
+— `cordis.patch.yml` is not hot-reloaded.
 
 ## Configuration
 
@@ -103,15 +104,16 @@ DSH desktop app after editing** — `cordis.patch.yml` is not hot-reloaded.
     - id: myops
       name: dsh-myops
       config:
-        hideOfficial: ['pwsh', 'read', 'glob', 'grep']   # optional
-        maxOutputChars: 60000                            # optional output cap
+        hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit']   # optional
+        maxOutputChars: 24000                            # optional output cap
         bashTimeoutMs: 120000                            # optional default bash timeout
         settingsPath: 'C:\Users\me\.dsh\myops-settings.json'  # optional
 ```
 
-`maxOutputChars` (default 60000) caps the model-visible text of
+`maxOutputChars` (default **24000**) caps the model-visible text of
 `ops_bash`/`ops_read`/`ops_glob`/`ops_grep`/`ops_git`; anything larger is spilled to
-disk and served through `ops_result`. It does not change the 2 MB bash capture limit.
+disk and the model only gets a **small preview (≤8k chars)** plus an `ops_result` id.
+It does not change the 2 MB bash capture limit.
 `bashTimeoutMs` is the `ops_bash` default when `timeoutMs` is omitted.
 
 Defaults above are only the initial values. Once the **Desktop settings page** saves
@@ -119,6 +121,24 @@ the settings file (`$DSH_HOME/myops-settings.json` by default), the file wins: t
 tools read it on every call (cached by mtime), so `maxOutputChars` and
 `bashTimeoutMs` changes apply immediately without a restart. `hideOfficial` is the
 exception — it is applied when the plugin loads, so toggling it needs a DSH restart.
+
+## Token efficiency
+
+The defaults are tuned so tool results stay small; every value is adjustable in
+Settings → `myops 工具` (or `myops-settings.json`):
+
+| Default | Value | Effect |
+| --- | --- | --- |
+| model-visible output cap | 24000 chars | oversized results spill with a ≤8k-char preview + `ops_result` id |
+| `ops_read` lines | 800 | a 3000-line file returns ~8k chars instead of ~60k |
+| `ops_glob` results | 200 | bounded worst case |
+| `ops_grep` matches | 120 | bounded worst case |
+| bash success output | stdout only | no `[exit code: 0, 28ms]` on success; failures/timeouts still print exit code and (slow) timing |
+| `hideOfficial` | all six | removes the official `pwsh`/`read`/`glob`/`grep`/`write`/`edit` so only one tool surface is sent |
+
+Measured: the nine tool definitions total **~6.4k chars (~1.8k tokens)** per request
+(down from ~9.1k / ~2.5k before trimming). Combined with `hideOfficial` this removes
+repeated per-request overhead; large reads now cost ~2.2k tokens instead of ~17k.
 
 ## Desktop settings page
 
@@ -130,7 +150,7 @@ registers **Settings → `myops 工具`**:
 | --- | --- |
 | 模型可见输出上限（字符） | `maxOutputChars`, 1,000–2,000,000 |
 | `ops_bash` 默认超时（毫秒） | `bashTimeoutMs`, 1,000–2,147,483,647 |
-| 屏蔽官方工具 `pwsh`/`read`/`glob`/`grep` | `hideOfficial`; restart required |
+| 屏蔽官方工具 `pwsh`/`read`/`glob`/`grep`/`write`/`edit` | `hideOfficial`; restart required |
 
 The page also shows the plugin version, platform, registered tools and the settings
 file path. It talks to `GET /api/myops-settings/state` and
@@ -180,15 +200,15 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
 - On timeout the model sees `timed out after <N>ms` plus a `[timeout]` note saying
   the output is partial; the process tree is terminated on a best-effort basis.
 - **Large output is spilled, not truncated away.** Bash captures up to 2M chars,
-  then anything over ~60k chars is written to
-  `%TEMP%\dsh-myops-spill\<id>.txt` and the model gets a preview plus
+  then anything over `maxOutputChars` is written to
+  `%TEMP%\dsh-myops-spill\<id>.txt` and the model gets a small preview (≤8k chars) plus
   `[full output "ops_bash" id=…; call ops_result(id="…") to page]`.
   `ops_result` pages it back with `offset`/`limit`.
 - **`ops_read` de-duplicates.** A whole-file read whose content is unchanged since
   the previous read returns
   `(unchanged since last read, rev …, read #N)` instead of the body; pass
   `force: true` to print it again. Windowed reads (`offset`/`limit`) always print.
-- `ops_read` defaults to 2000 lines and prints `[truncated: pass offset=N to continue]`,
+- `ops_read` defaults to 800 lines and prints `[truncated: pass offset=N to continue]`,
   so reading a large log cannot flood the context in one call.
 - `ops_write` / `ops_edit` validate everything before touching disk and replace via
   a temp file + rename, so a failed call never leaves a half-written file.

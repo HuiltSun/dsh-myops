@@ -193,7 +193,7 @@ if (defs.size !== EXPECTED.length) failures.push(`registered ${defs.size} tools,
 /* ------------------------------------------------------------------ */
 await bench('ops_bash', 'echo (git bash -c)', { command: 'echo BENCH_OK' }, {
   reps: 7,
-  check: (t) => (t.includes('BENCH_OK') && /exit code: 0/.test(t) ? true : 'missing BENCH_OK/exit code'),
+  check: (t) => (t.includes('BENCH_OK') ? true : 'missing BENCH_OK'),
 });
 await bench('ops_bash', 'bash -lc 登录 shell 对照', { command: 'bash -lc "echo LOGIN"' }, {
   reps: 5,
@@ -243,16 +243,16 @@ await bench('ops_bash', 'login=true 登录 shell', { command: 'echo LOGIN_OK', l
 /* ------------------------------------------------------------------ */
 /* 2. ops_read + 去重                                                  */
 /* ------------------------------------------------------------------ */
-const readFirst = await bench('ops_read', '2000 行全文首次读', { path: bigTxt }, {
+const readFirst = await bench('ops_read', '2000 行全文首次读', { path: bigTxt, limit: 2000 }, {
   reps: 1,
   check: (t) => (t.includes('2000 lines') && t.includes('1| row 1') ? true : 'bad header/body'),
 });
-await bench('ops_read', '重复读（去重命中）', { path: bigTxt }, {
+await bench('ops_read', '重复读（去重命中）', { path: bigTxt, limit: 2000 }, {
   reps: 5,
   check: (t) => (t.includes('unchanged since last read') ? true : 'dedup not triggered'),
 });
-const readSecond = String(await T('ops_read').execute({ path: bigTxt, force: true }));
-const dedupSaving = (1 - (String(await T('ops_read').execute({ path: bigTxt })).length / Math.max(1, readFirst.length))) * 100;
+const readSecond = String(await T('ops_read').execute({ path: bigTxt, limit: 2000, force: true }));
+const dedupSaving = (1 - (String(await T('ops_read').execute({ path: bigTxt, limit: 2000 })).length / Math.max(1, readFirst.length))) * 100;
 await bench('ops_read', '窗口读 offset/limit', { path: bigTxt, offset: 1000, limit: 20 }, {
   reps: 5,
   check: (t) => (t.includes('showing 1000-1019') && t.includes('1000|') ? true : 'bad window'),
@@ -434,7 +434,7 @@ if (spillId) {
   const origin = `http://127.0.0.1:${server.address().port}`;
   try {
     const state = await (await fetch(`${origin}/api/myops-settings/state`)).json();
-    checkOnly('settings', 'GET state', state.version === 'test-1.4.0' && state.settings.maxOutputChars === 60000 &&
+    checkOnly('settings', 'GET state', state.version === 'test-1.4.0' && state.settings.maxOutputChars === 24000 &&
       state.restartRequiredFor.includes('hideOfficial') && state.tools.length === 2, JSON.stringify(state).slice(0, 160));
     const post = await fetch(`${origin}/api/myops-settings/configure`, {
       method: 'POST',

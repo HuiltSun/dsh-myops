@@ -455,23 +455,27 @@ function renderBash(value) {
     lines.push(value.stderr.replace(/\s+$/, ''));
   }
   const meta = [];
-  if (value.exitCode !== null && value.exitCode !== undefined) meta.push(`exit code: ${value.exitCode}`);
+  const failed = value.exitCode !== null && value.exitCode !== undefined && value.exitCode !== 0;
+  if (failed) meta.push(`exit code: ${value.exitCode}`);
   if (value.signal) meta.push(`signal: ${value.signal}`);
   if (value.timedOut) {
     meta.push(Number.isFinite(value.timeoutMs) ? `timed out after ${value.timeoutMs}ms` : 'timed out');
-  } else if (value.mode && value.mode !== 'service') {
-    meta.push(`mode: ${value.mode}`);
+  } else if (value.mode === 'direct') {
+    meta.push('mode: direct');
   }
   if (value.stdoutTruncated || value.stderrTruncated) meta.push('output truncated');
   if (value.error) meta.push(`error: ${value.error}`);
-  if (value.durationMs != null) meta.push(`${value.durationMs}ms`);
+  // 耗时只在慢调用/失败时输出：普通成功调用默认保持静默，省 token。
+  if (Number.isFinite(value.durationMs) && (failed || value.timedOut || value.durationMs >= 2000)) {
+    meta.push(`${value.durationMs}ms`);
+  }
   if (meta.length) lines.push(`[${meta.join(', ')}]`);
   if (value.timedOut) {
     lines.push('[timeout] the command was killed; the output above is partial. ' +
       'Child processes were terminated on a best-effort basis — a few may survive briefly in fallback mode.');
   }
   let text = lines.join('\n');
-  if (!text) text = `[exit code: ${value.exitCode ?? 0}]`;
+  if (!text) text = failed ? `[exit code: ${value.exitCode}]` : '[ok]';
   return text;
 }
 
@@ -693,29 +697,16 @@ function buildTools(ctx, deps) {
   const bashTool = {
     name: 'ops_bash',
     description:
-      'Run a shell command with Git Bash (the Bash shell). Use this instead of PowerShell. ' +
-      'Supports pipes, redirection and normal Unix tooling. Returns stdout, stderr and the exit code. ' +
-      'Commands run with full user-level privileges (not confined to the workspace). ' +
-      'On timeout the output is partial and the process tree is terminated (best effort).',
+      'Run a shell command with Git Bash. Returns stdout, stderr and the exit code; full user privileges, not sandboxed. ' +
+      'On timeout the output is partial and the process tree is terminated.',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: 'The bash command to run.' },
-        description: { type: 'string', description: 'Short human-readable description of what the command does.' },
-        workdir: { type: 'string', description: 'Working directory. Defaults to the session working directory.' },
-        timeoutMs: { type: 'number', description: 'Timeout in milliseconds. Defaults to 120000.' },
-        mode: {
-          type: 'string',
-          enum: ['auto', 'direct', 'service'],
-          description: 'Execution path. auto (default): host subprocess service, falling back to a direct spawn. ' +
-            'direct: force the direct-spawn fallback (useful for reproducing fallback-path bugs). ' +
-            'service: require the host subprocess service; fail instead of falling back.',
-        },
-        login: {
-          type: 'boolean',
-          description: 'Run a login shell (bash -lc) so /etc/profile and the user profile are sourced. ' +
-            'Defaults to false (bash -c, ~140 ms faster per call).',
-        },
+        command: { type: 'string', description: 'Bash command.' },
+        workdir: { type: 'string', description: 'Defaults to the session working directory.' },
+        timeoutMs: { type: 'number', description: 'Default 120000.' },
+        mode: { type: 'string', enum: ['auto', 'direct', 'service'], description: 'auto: service then direct; direct: force fallback; service: require service.' },
+        login: { type: 'boolean', description: 'Use bash -lc (sources profile). Default false (bash -c, faster).' },
       },
       required: ['command'],
       additionalProperties: false,
@@ -740,18 +731,15 @@ function buildTools(ctx, deps) {
   const readTool = {
     name: 'ops_read',
     description:
-      'Read a text file and return it with line numbers. Use offset/limit to page through large files. ' +
-      `Defaults to the first ${DEFAULT_READ_LINES} lines and reports how to continue. ` +
-      'Reading a file whose content is unchanged since the previous read returns a short notice ' +
-      'instead of the body; pass force=true to print it again. ' +
-      'Compact output: `File: <path> (N lines)` then `<line>| <content>`.',
+      'Read a text file with line numbers. Whole-file reads are de-duplicated (pass force=true to reprint); ' +
+      `windowed reads always print. Defaults to the first ${DEFAULT_READ_LINES} lines.`,
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'File path (absolute, or relative to the session working directory).' },
-        offset: { type: 'number', description: '1-based line to start from. Defaults to 1.' },
-        limit: { type: 'number', description: `Maximum number of lines to return. Defaults to ${DEFAULT_READ_LINES}.` },
-        force: { type: 'boolean', description: 'Print the body even if the content is unchanged since the last read.' },
+        path: { type: 'string', description: 'Absolute or session-relative path.' },
+        offset: { type: 'number', description: '1-based start line.' },
+        limit: { type: 'number', description: `Max lines (default ${DEFAULT_READ_LINES}).` },
+        force: { type: 'boolean', description: 'Re-print even if unchanged.' },
       },
       required: ['path'],
       additionalProperties: false,
@@ -779,17 +767,13 @@ function buildTools(ctx, deps) {
   const globTool = {
     name: 'ops_glob',
     description:
-      'Find files by glob pattern (e.g. `**/*.ts`, `src/**/*.json`). Returns relative paths, one per line. ' +
-      'Skips .git and node_modules; symlinks are not followed.',
+      'Find files by glob pattern. Returns relative paths; skips .git/node_modules; symlinks not followed.',
     parameters: {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: 'Glob pattern.' },
-        path: { type: 'string', description: 'Directory to search. Defaults to the session working directory.' },
-        stat: {
-          type: 'boolean',
-          description: 'Also report size and mtime for every match (one extra stat per file). Defaults to false.',
-        },
+        path: { type: 'string', description: 'Defaults to session working directory.' },
+        stat: { type: 'boolean', description: 'Add size and mtime per match.' },
       },
       required: ['pattern'],
       additionalProperties: false,
@@ -824,17 +808,15 @@ function buildTools(ctx, deps) {
   const grepTool = {
     name: 'ops_grep',
     description:
-      'Search file contents with a regular expression. Returns `file:line: text` matches. ' +
-      'Skips .git, node_modules, binary files and files larger than 5 MB. ' +
-      '`include` is a single glob (e.g. `**/*.js`); it is NOT recursive by itself — write `**/` explicitly.',
+      'Search file contents with a regex. Returns file:line: text. Skips .git/node_modules, binaries and >5 MB files.',
     parameters: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'Regular expression to search for.' },
-        path: { type: 'string', description: 'Directory to search. Defaults to the session working directory.' },
-        include: { type: 'string', description: 'Glob restricting which files are searched (e.g. `**/*.js`; `*.js` only matches the top level).' },
-        exclude: { type: 'string', description: 'Regular expression; matching lines are omitted from the results.' },
-        caseInsensitive: { type: 'boolean', description: 'Case-insensitive matching.' },
+        pattern: { type: 'string', description: 'Regular expression.' },
+        path: { type: 'string', description: 'Defaults to session working directory.' },
+        include: { type: 'string', description: 'Glob filter; not recursive unless `**/` is used.' },
+        exclude: { type: 'string', description: 'Regex; matching lines are omitted.' },
+        caseInsensitive: { type: 'boolean', description: 'Case-insensitive.' },
       },
       required: ['pattern'],
       additionalProperties: false,

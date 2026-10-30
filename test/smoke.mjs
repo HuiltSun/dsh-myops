@@ -60,7 +60,7 @@ ok('all 9 tools registered', expected.every((n) => defs.has(n)), [...defs.keys()
 console.log('--- ops_bash ---');
 const bashOut = String(await T('ops_bash').execute({ command: 'echo SMOKE_OK; pwd' }));
 ok('bash runs', bashOut.includes('SMOKE_OK'), bashOut.split('\n')[0]);
-ok('bash reports exit code', bashOut.includes('exit code: 0'));
+ok('bash success output is compact (no exit code: 0)', !bashOut.includes('exit code: 0'), bashOut.split('\n').slice(-1)[0]);
 
 console.log('--- ops_write / ops_edit / ops_stat ---');
 const file = join(work, 'a.txt');

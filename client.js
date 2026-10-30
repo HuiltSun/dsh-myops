@@ -24,6 +24,8 @@ window.__ModuleLoader__.load({
       ['read', 'read（官方读文件）'],
       ['glob', 'glob（官方文件查找）'],
       ['grep', 'grep（官方内容搜索）'],
+      ['write', 'write（官方写文件）'],
+      ['edit', 'edit（官方编辑）'],
     ];
     const labelStyle = { fontSize: 13, color: 'var(--dsw-alias-label-secondary)', margin: 0 };
     const mutedStyle = { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', margin: 0 };
@@ -161,7 +163,7 @@ window.__ModuleLoader__.load({
             disabled: saving,
             onChange: (event) => setDraft({ ...draft, maxOutputChars: event.target.value }),
           }),
-          h('p', { style: mutedStyle }, '超过上限的输出会落盘，模型只收到预览，可用 ops_result 翻页。默认 60000。'),
+          h('p', { style: mutedStyle }, '超过上限的输出会落盘，模型只收到小预览，可用 ops_result 翻页。默认 24000。'),
         ),
         h('div', { style: cardStyle },
           h('label', { style: { ...labelStyle, fontWeight: 600 } }, 'ops_bash 默认超时（毫秒）'),

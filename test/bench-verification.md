@@ -76,7 +76,18 @@ cd test/doc && node selftest.mjs # 文档解析自测
 
 ### 3. 回归
 
-`node test/bench.mjs` 64/64、`node test/smoke.mjs` 28/28。
+## v2.1.0 补充（token 优化）
+
+按“A→B”顺序执行：A 为配置层（settings + profile patch），B 为代码层。
+
+- A（配置）：`~/.dsh/myops-settings.json` 与 profile `cordis.patch.yml` 均改为
+  `maxOutputChars: 24000`、`hideOfficial: ['pwsh','read','glob','grep','write','edit']`（需重启生效）。
+- B（代码）：默认值下调（read 800 行、glob 200、grep 120）、spill 预览封顶 8k 字符、
+  bash 成功调用静默、9 个工具描述/ schema 精简（9,098 → 6,401 字符）、
+  `hideOfficial` 支持 write/edit。
+- 实测：工具定义 ~2,527 → **~1,778 tokens/请求**；3000 行大读取可见输出
+  59,968 → **8,084 字符（~2.2k tokens）**；`echo hi` 的输出从 20+ 字符降为 `hi`。
+- bench 64/64、smoke 28/28。
 
 ## v2.0.0 补充（移除文档类工具）
 
