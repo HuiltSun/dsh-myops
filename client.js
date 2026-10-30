@@ -27,6 +27,13 @@ window.__ModuleLoader__.load({
       ['write', 'write（官方写文件）'],
       ['edit', 'edit（官方编辑）'],
     ];
+    const PRESETS = [
+      { id: 'token-saver', label: '极致省 token', settings: { maxOutputChars: 12000, bashTimeoutMs: 120000, hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit'] } },
+      { id: 'balanced', label: '均衡', settings: { maxOutputChars: 24000, bashTimeoutMs: 120000, hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit'] } },
+      { id: 'generous', label: '宽松（大输出）', settings: { maxOutputChars: 60000, bashTimeoutMs: 300000, hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit'] } },
+      { id: 'debug-official', label: '调试（保留官方工具）', settings: { maxOutputChars: 60000, bashTimeoutMs: 120000, hideOfficial: [] } },
+      { id: 'quiet-code', label: '只隐藏读类工具', settings: { maxOutputChars: 24000, bashTimeoutMs: 120000, hideOfficial: ['read', 'glob', 'grep'] } },
+    ];
     const labelStyle = { fontSize: 13, color: 'var(--dsw-alias-label-secondary)', margin: 0 };
     const mutedStyle = { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', margin: 0 };
     const cardStyle = {
@@ -148,12 +155,57 @@ window.__ModuleLoader__.load({
         }
       }
 
+      async function applyPreset(preset) {
+        setSaving(true);
+        setStatus({ kind: 'saving', message: `正在应用「${preset.label}」…` });
+        try {
+          const saved = await api.save(preset.settings);
+          setState((value) => ({ ...value, settings: saved.settings }));
+          setDraft({
+            maxOutputChars: String(saved.settings.maxOutputChars),
+            bashTimeoutMs: String(saved.settings.bashTimeoutMs),
+            hideOfficial: saved.settings.hideOfficial,
+          });
+          const hideChanged = JSON.stringify(saved.settings.hideOfficial) !== initialHide;
+          setInitialHide(JSON.stringify(saved.settings.hideOfficial));
+          setStatus({
+            kind: 'saved',
+            message: hideChanged
+              ? `已应用「${preset.label}」。输出上限与默认超时立即生效；官方工具屏蔽需重启 DSH 桌面端。`
+              : `已应用「${preset.label}」，立即生效。`,
+          });
+        } catch (error) {
+          setStatus({ kind: 'error', message: String(error?.message ?? error) });
+        } finally {
+          setSaving(false);
+        }
+      }
+
       const tools = Array.isArray(state?.tools) ? state.tools : [];
+      const activePreset = state && PRESETS.find((preset) => {
+        try { return JSON.stringify(preset.settings) === JSON.stringify(state.settings); } catch { return false; }
+      });
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 820, paddingBottom: 32 } },
         h('h2', { style: { margin: 0 } }, 'dsh-myops 工具设置'),
         h('p', { style: mutedStyle }, state ? `版本 ${state.version} · ${state.platform} · 已注册 ${tools.length} 个工具` : '正在读取插件状态…'),
         status.kind === 'error' && h('p', { role: 'alert', style: { color: 'var(--dsw-alias-label-error, #c0392b)', margin: 0 } }, status.message),
         status.kind === 'saved' && h('p', { role: 'status', style: { color: 'var(--dsw-alias-label-success, #1e7e34)', margin: 0 } }, status.message),
+        h('div', { style: cardStyle },
+          h('span', { style: { ...labelStyle, fontWeight: 600 } }, '配置档（直接选择）'),
+          h('p', { style: mutedStyle }, '点击立即应用；应用后仍可在下方微调并单独保存。'),
+          h('div', { style: rowStyle },
+            ...PRESETS.map((preset) => h('button', {
+              key: preset.id,
+              type: 'button',
+              style: activePreset?.id === preset.id ? { ...btnStyle, fontWeight: 600 } : btnStyle,
+              disabled: saving || status.kind === 'loading',
+              'aria-pressed': activePreset?.id === preset.id,
+              title: `${preset.id} · 输出上限 ${preset.settings.maxOutputChars} · 超时 ${preset.settings.bashTimeoutMs}ms`,
+              onClick: () => { void applyPreset(preset); },
+            }, activePreset?.id === preset.id ? `✓ ${preset.label}` : preset.label)),
+          ),
+          activePreset && h('p', { style: mutedStyle }, `当前配置档：${activePreset.id}（${activePreset.label}）`),
+        ),
         h('div', { style: cardStyle },
           h('label', { style: { ...labelStyle, fontWeight: 600 } }, '模型可见输出上限（字符）'),
           h('input', {

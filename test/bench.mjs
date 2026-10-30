@@ -497,6 +497,9 @@ if (spillId) {
     registrations[0].value.name === 'settings.section' && registrations[0].value.id === 'myops' &&
     typeof registrations[0].component === 'function',
     `registrations=${registrations.length}`);
+  const clientSource = readFileSync(join(HERE, '..', 'client.js'), 'utf8');
+  const presetIds = ['token-saver', 'balanced', 'generous', 'debug-official', 'quiet-code'];
+  checkOnly('settings', '设置页内置配置档', presetIds.every((id) => clientSource.includes(`id: '${id}'`)), presetIds.join(','));
 }
 
 /* ------------------------------------------------------------------ */

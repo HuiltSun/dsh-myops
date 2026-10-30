@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.2.0 — 2026-10-31（设置页配置档）
+
+- Desktop 设置页顶部新增「配置档（直接选择）」：token-saver / balanced / generous /
+  debug-official / quiet-code 五个按钮，点击即通过 `POST /configure` 应用对应
+  `maxOutputChars` / `bashTimeoutMs` / `hideOfficial`；当前命中的配置档显示 ✓。
+- 应用后仍可在下方微调数值/勾选后单独保存；输出上限与超时立即生效，
+  `hideOfficial` 变更提示重启。
+- 配置档与 `configs/myops-presets.json` 保持一致（页面内置一份，无需读取磁盘）。
+
+### 测试
+
+- bench 新增「设置页内置配置档」断言（65 项），smoke 28 项。
+
+---
+
 ## v2.1.0 — 2026-10-31（token 优化）
 
 ### 默认值调整

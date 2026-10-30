@@ -2,7 +2,7 @@
 
 - **时间**：2026-10-31 03:21–03:26（Asia/Shanghai）
 - **环境**：Windows / Node v26.8.1 / Git Bash；工作区 `E:\dsh-myops`；插件 v1.1.0 已装入 desktop profile 并在当前会话注册
-- **结论**：**9/9 工具在真实会话中可用；64/64 效率/回归用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测；文档类工具已在 v2.0.0 移除（见文末）。
+- **结论**：**9/9 工具在真实会话中可用；65/65 效率/回归用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测；文档类工具已在 v2.0.0 移除（见文末）。
 
 ## 验证方法
 
@@ -87,7 +87,7 @@ cd test/doc && node selftest.mjs # 文档解析自测
   `hideOfficial` 支持 write/edit。
 - 实测：工具定义 ~2,527 → **~1,778 tokens/请求**；3000 行大读取可见输出
   59,968 → **8,084 字符（~2.2k tokens）**；`echo hi` 的输出从 20+ 字符降为 `hi`。
-- bench 64/64、smoke 28/28。
+- bench 65/65、smoke 28/28。
 
 ## v2.0.0 补充（移除文档类工具）
 
@@ -120,3 +120,8 @@ cd test/doc && node selftest.mjs # 文档解析自测
 - 澄清并修正了首轮清单中的 5 处不准确之处（`ops_edit` 已有 dryRun/多块、`ops_read_table` 支持 `;` 分隔符、窗口读去重已在 README、grep >5 MB 文件直接跳过、hideOfficial 重启规则已写明）。
 - 文档补齐：grep `include` 非递归、grep >5 MB 跳过、glob symlink 不跟随、spill 7 天 TTL + 200 条上限与清理时机、read_table 仅 UTF-8 及错误文案、docx 加密报错、`ops_bash` 权限边界、bench 失败项含义、配置 `maxOutputChars`。
 - 大功能（GBK、PDF 密码/OCR、docx 页眉页脚、grep 流式、CJK 列宽、`-Restore` 自检、spill 周期清理）已归档到 `docs/KNOWN-ISSUES.md` 的 ISSUE-006..012。
+
+## v2.2.0 补充（设置页配置档）
+
+- 设置页新增五个配置档按钮（token-saver / balanced / generous / debug-official / quiet-code），点击直接应用并显示当前 ✓；与 configs/myops-presets.json 同源。
+- bench 新增「设置页内置配置档」断言（65 项），smoke 28 项。

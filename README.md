@@ -61,7 +61,7 @@ backup paths, byte counts) plus the copied `dsh-myops/` folder and
 
 ```powershell
 node test/smoke.mjs   # 28 checks: registration, bash, write/edit/stat safety, dedup, glob/grep, spill paging
-node test/bench.mjs   # 64 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page
+node test/bench.mjs   # 65 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page (presets)
 ```
 
 `test/bench.mjs` also writes `test/bench-report.json`. Exit code 0 means everything passed.
@@ -161,6 +161,7 @@ registers **Settings → `myops 工具`**:
 
 | Control | Meaning |
 | --- | --- |
+| 配置档（快速选择） | token-saver / balanced / generous / debug-official / quiet-code，点击即应用 |
 | 模型可见输出上限（字符） | `maxOutputChars`, 1,000–2,000,000 |
 | `ops_bash` 默认超时（毫秒） | `bashTimeoutMs`, 1,000–2,147,483,647 |
 | 屏蔽官方工具 `pwsh`/`read`/`glob`/`grep`/`write`/`edit` | `hideOfficial`; restart required |
