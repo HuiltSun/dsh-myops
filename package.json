@@ -1,6 +1,6 @@
 {
   "name": "dsh-myops",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Lightweight, dependency-free replacement for dsh-ops: Git Bash, compact read/glob/grep, write/edit/stat, paged spill output, read de-duplication, and CSV/DOCX/PDF readers for DSH on Windows.",
   "type": "module",
   "main": "index.mjs",
@@ -16,7 +16,8 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node test/smoke.mjs"
+    "test": "node test/smoke.mjs",
+    "bench": "node test/bench.mjs"
   },
   "dsh": {
     "bundle": {

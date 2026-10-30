@@ -1,5 +1,60 @@
 # Changelog
 
+## v1.2.0 — 2026-10-31
+
+### 新增参数与能力
+
+- **`ops_bash`**：
+  - `mode: 'auto' | 'direct' | 'service'` — `direct` 强制走直连回退路径（方便复现
+    fallback bug），`service` 强制要求宿主 subprocess 服务（不可用时直接报错，
+    不再静默降级）。
+  - `login: true` — 用 `bash -lc` 登录 shell（source `/etc/profile` 与用户 profile），
+    供依赖 profile 环境变量的脚本使用；默认仍是更快的 `bash -c`。
+  - 超时输出新增 `timed out after <N>ms` 与 `[timeout] … output is partial` 提示。
+- **`ops_grep`**：新增 `exclude` 正则（对匹配到的行做内容排除）；`include` 的
+  非递归语义、>5 MB 文件跳过写进工具描述与 README。
+- **`ops_glob`**：新增 `stat: true`，为每个结果附带 `size` 与 ISO `mtime`。
+- **`ops_stat`**：新增 `paths: [...]` 批量查询（缺失项报 `not found`，不中断整批）。
+- **配置**：新增 `maxOutputChars`（默认 60000）控制 `ops_bash`/`ops_read`/
+  `ops_glob`/`ops_grep` 的模型可见输出上限；超过部分仍走 spill + `ops_result`。
+
+### 修复
+
+- **Windows 直连回退路径的超时现在真正生效**。此前 `timeoutMs=800` 的
+  `sleep 3` 要 3043 ms 才返回：`child.kill('SIGKILL')` 只杀 `bash.exe`，
+  MSYS2 fork 出的孙进程还持着 stdout/stderr 管道，`close` 事件被拖到命令
+  自然结束。现在超时会终止整棵进程树：
+  - `taskkill /PID <pid> /T /F` 终止 Windows 侧进程；
+  - MSYS2 的孙进程（如 `sleep`）`ParentProcessId` 指向已退出的 fork 辅助
+    进程，`taskkill /T` 追不到；改为启动命令时注入随机环境变量
+    `DSH_MYOPS_RUN_ID`，超时时用一个不带该变量的辅助 bash 扫描
+    `/proc/<pid>/environ` 并 `kill -9` 所有命中进程。
+  - 直连路径的输出改写入临时文件（而非管道），捕获目录在结束时清理。
+  - 实测：`timeoutMs=800` + `sleep 3` 连续 5 次 **916–925 ms** 返回，
+    无 `sleep.exe` 残留，无临时目录泄漏。
+- **相对路径绑定会话工作目录**：所有路径型工具（`ops_read` / `ops_glob` /
+  `ops_grep` / `ops_write` / `ops_edit` / `ops_stat` / `ops_read_table` /
+  `ops_read_docx` / `ops_read_pdf`）和 `ops_bash` 的默认 `workdir` 改为按
+  DSH 的 `workingDirectory` 服务解析（`session.header.cwd` 兜底）；显式
+  `workdir` 与绝对路径优先。此前相对路径会落到宿主进程 cwd
+  （`~/.dsh/profiles/desktop`）。
+- `ops_edit` 描述补充：多块 `edits` + `dryRun` 已存在；CRLF/CR 匹配前会
+  规范化为 LF，写回文件使用 LF。
+
+### 文档
+
+- README 补齐：grep `include` 非递归与 >5 MB 跳过、`exclude`、glob 不跟随
+  symlink、spill 的 7 天 TTL / 200 条上限与清理时机、read_table 仅 UTF-8 及
+  错误文案、docx 加密报错、`ops_bash` 权限边界、bench 失败项对应关系。
+
+### 测试
+
+- `test/bench.mjs` 扩展到 60 项：新增 `mode=direct/service`、`login`、超时
+  提示、`exclude`、glob `stat`、stat 批量、`maxOutputChars` 配置用例，
+  以及原有的超时稳定性、孤儿进程、临时目录、11 个会话 cwd 用例。
+
+---
+
 ## v1.1.0 — 2026-10-31
 
 从 4 个工具扩展到 11 个，仍然零依赖。

@@ -24,7 +24,18 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import {
+  existsSync,
+  statSync,
+  mkdtempSync,
+  openSync,
+  closeSync,
+  readSync,
+  unlinkSync,
+  rmdirSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as fsp from 'node:fs/promises';
 import { resolve as resolvePath, isAbsolute, join, sep, relative } from 'node:path';
 
@@ -35,6 +46,8 @@ import {
     MAX_GREP_MATCHES,
     DEFAULT_READ_LINES,
     OUTPUT,
+    resolveWorkdir,
+    resolveSessionCwd,
 } from './lib/common.mjs';
 import { createSpillStore, buildResultTool } from './lib/output-spill.mjs';
 import { createReadDedup } from './lib/read-dedup.mjs';
@@ -109,11 +122,6 @@ function toPosix(p) {
   return sep === '\\' ? p.split('\\').join('/') : p;
 }
 
-function resolveWorkdir(workdir) {
-  if (!workdir) return process.cwd();
-  return isAbsolute(workdir) ? workdir : resolvePath(process.cwd(), workdir);
-}
-
 function shellEnv(extra) {
   return {
     ...process.env,
@@ -123,6 +131,14 @@ function shellEnv(extra) {
     GIT_PAGER: 'cat',
     ...(extra ?? {}),
   };
+}
+
+/**
+ * bash 参数（不含可执行文件）：默认 `-c`（快）；`login: true` 时 `-lc`，会 source
+ * /etc/profile 与用户 profile，每次多付 ~140 ms，但部分脚本依赖 profile 里的环境变量。
+ */
+function bashArgs(command, opts = {}) {
+  return [opts.login === true ? '-lc' : '-c', command];
 }
 
 /* ------------------------------------------------------------------ */
@@ -173,7 +189,7 @@ async function runBashViaService(ctx, command, opts = {}) {
       // `-c` only: a login shell (`-lc`) re-sources /etc/profile and the user
       // profile on every call, costing ~135 ms per invocation here, and Git Bash
       // already puts mingw64/bin and /usr/bin on PATH without `-l`.
-      argv: [bash, '-c', command],
+      argv: [bash, ...bashArgs(command, opts)],
       cwd,
       stdio: {
         stdin: { data: '' },
@@ -205,6 +221,7 @@ async function runBashViaService(ctx, command, opts = {}) {
       stdoutTruncated: out.truncated,
       stderrTruncated: err.truncated,
       timedOut,
+      timeoutMs,
       durationMs: Date.now() - startedAt,
       bash,
     };
@@ -213,6 +230,83 @@ async function runBashViaService(ctx, command, opts = {}) {
     if (opts.signal) {
       try { opts.signal.removeEventListener('abort', onCallerAbort); } catch { /* ignore */ }
     }
+  }
+}
+
+/**
+ * 终止 bash 及其子进程树。
+ *
+ * Windows 上 `child.kill('SIGKILL')` 只会杀掉 bash.exe，`sleep` 等子进程仍持有
+ * 继承来的 stdout/stderr 管道，`close` 事件必须等它们自己结束——于是 timeoutMs
+ * 看起来“生效”（timedOut=true），实际却要等命令跑完才返回。
+ *
+ * 两条路径并行：
+ *   1. `taskkill /PID <pid> /T /F` 终止 Windows 进程树（bin/bash.exe 启动器等）；
+ *   2. MSYS2 的 fork 会让孙进程的 Windows ParentProcessId 指向一个已退出的
+ *      fork 辅助进程，`taskkill /T` 因此追不到 sleep 之类的孙进程。启动命令时
+ *      注入一个随机环境变量 `DSH_MYOPS_RUN_ID`，超时时用一个*不带该变量*的
+ *      辅助 bash 扫 `/proc/<pid>/environ`，把所有继承了该变量的 cygwin 进程
+ *      一次性 kill 掉（实测 80–120 ms 完成）。
+ */
+function terminateProcessTree(child, runToken) {
+  if (!child || child.exitCode !== null) return;
+  if (process.platform === 'win32' && Number.isInteger(child.pid)) {
+    try {
+      const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      killer.on('error', () => {
+        try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      });
+    } catch {
+      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+    }
+    if (runToken) killMsysDescendants(runToken);
+    return;
+  }
+  try { child.kill('SIGKILL'); } catch { /* ignore */ }
+}
+
+/**
+ * 用唯一 token 在 MSYS2 的 /proc 中定位并杀死仍持有它的进程。
+ * 辅助 bash 本身不能带 token（否则会把自己 kill 掉）。
+ */
+function killMsysDescendants(runToken) {
+  const script = 'token="$1"; '
+    + 'pids=""; '
+    + 'for d in /proc/[0-9]*; do '
+    + '  if grep -qa -- "$token" "$d/environ" 2>/dev/null; then pids="$pids ${d#/proc/}"; fi; '
+    + 'done; '
+    + '[ -n "$pids" ] && kill -9 $pids 2>/dev/null; true';
+  const env = { ...process.env };
+  delete env.DSH_MYOPS_RUN_ID;
+  try {
+    const helper = spawn(resolveBash(), ['-c', script, 'myops-kill-tree', runToken], {
+      windowsHide: true,
+      stdio: 'ignore',
+      env,
+    });
+    helper.on('error', () => { /* best effort */ });
+  } catch { /* best effort */ }
+}
+
+/**
+ * 从捕获文件读取前缀（最多 maxBytes 字节）；文件不存在时返回空文本。
+ * 直接 spawn 回退路径不再用管道收集输出：MSYS2 子进程会继承管道句柄，
+ * 即使进程被 taskkill 杀掉，Node 的 close 事件也可能被延迟数秒。
+ */
+function readPrefix(filePath, maxBytes) {
+  let fd;
+  try {
+    fd = openSync(filePath, 'r');
+    const buf = Buffer.alloc(maxBytes);
+    const bytes = readSync(fd, buf, 0, maxBytes, 0);
+    return { text: buf.subarray(0, bytes).toString('utf8'), bytes };
+  } catch {
+    return { text: '', bytes: 0 };
+  } finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* ignore */ } }
   }
 }
 
@@ -225,15 +319,45 @@ function runBashDirect(command, opts = {}) {
 
   return new Promise((resolve) => {
     const startedAt = Date.now();
-    let child;
+    let captureDir;
     try {
-      child = spawn(bash, ['-c', command], {
-        cwd,
-        env: shellEnv(opts.env),
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      captureDir = mkdtempSync(join(tmpdir(), 'dsh-myops-bash-'));
     } catch (error) {
+      resolve(emptyBashResult({
+        error: `failed to create capture directory: ${error?.message ?? error}`,
+        durationMs: Date.now() - startedAt,
+      }));
+      return;
+    }
+    const outPath = join(captureDir, 'stdout.txt');
+    const errPath = join(captureDir, 'stderr.txt');
+
+    const cleanup = () => {
+      try { unlinkSync(outPath); } catch { /* ignore */ }
+      try { unlinkSync(errPath); } catch { /* ignore */ }
+      try { rmdirSync(captureDir); } catch { /* ignore */ }
+    };
+
+    let child;
+    const runToken = process.platform === 'win32'
+      ? `dshMyops${randomBytes(8).toString('hex')}`
+      : '';
+    try {
+      const outFd = openSync(outPath, 'w');
+      const errFd = openSync(errPath, 'w');
+      try {
+        child = spawn(bash, bashArgs(command, opts), {
+          cwd,
+          env: runToken ? { ...shellEnv(opts.env), DSH_MYOPS_RUN_ID: runToken } : shellEnv(opts.env),
+          windowsHide: true,
+          stdio: ['ignore', outFd, errFd],
+        });
+      } finally {
+        closeSync(outFd);
+        closeSync(errFd);
+      }
+    } catch (error) {
+      cleanup();
       resolve(emptyBashResult({
         error: `failed to spawn bash (${bash}): ${error?.message ?? error}`,
         durationMs: Date.now() - startedAt,
@@ -241,8 +365,6 @@ function runBashDirect(command, opts = {}) {
       return;
     }
 
-    let stdout = '';
-    let stderr = '';
     let timedOut = false;
     let settled = false;
 
@@ -251,21 +373,25 @@ function runBashDirect(command, opts = {}) {
       settled = true;
       clearTimeout(timer);
       try { opts.signal?.removeEventListener?.('abort', onAbort); } catch { /* ignore */ }
-      const out = capText(stripAnsi(stdout), BASH_CAPTURE_MAX_CHARS);
-      const err = capText(stripAnsi(stderr), BASH_CAPTURE_MAX_CHARS);
+      const rawOut = readPrefix(outPath, BASH_CAPTURE_MAX_CHARS * 4);
+      const rawErr = readPrefix(errPath, BASH_CAPTURE_MAX_CHARS * 4);
+      const out = capText(stripAnsi(rawOut.text), BASH_CAPTURE_MAX_CHARS);
+      const err = capText(stripAnsi(rawErr.text), BASH_CAPTURE_MAX_CHARS);
+      cleanup();
       resolve({
         ...value,
         stdout: out.text,
         stderr: err.text,
-        stdoutTruncated: out.truncated,
-        stderrTruncated: err.truncated,
+        stdoutTruncated: out.truncated || rawOut.text.length >= BASH_CAPTURE_MAX_CHARS,
+        stderrTruncated: err.truncated || rawErr.text.length >= BASH_CAPTURE_MAX_CHARS,
         durationMs: Date.now() - startedAt,
+        timeoutMs,
         bash,
       });
     };
 
     const onAbort = () => {
-      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      terminateProcessTree(child, runToken);
     };
     if (opts.signal) {
       if (opts.signal.aborted) onAbort();
@@ -274,15 +400,9 @@ function runBashDirect(command, opts = {}) {
 
     const timer = setTimeout(() => {
       timedOut = true;
-      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      terminateProcessTree(child, runToken);
     }, timeoutMs);
 
-    child.stdout?.on('data', (chunk) => {
-      if (stdout.length < BASH_CAPTURE_MAX_CHARS) stdout += chunk.toString('utf8');
-    });
-    child.stderr?.on('data', (chunk) => {
-      if (stderr.length < BASH_CAPTURE_MAX_CHARS) stderr += chunk.toString('utf8');
-    });
     child.on('error', (error) => {
       finish({ status: 'failed', exitCode: null, signal: null, error: String(error?.message ?? error), timedOut });
     });
@@ -298,16 +418,26 @@ function runBashDirect(command, opts = {}) {
 }
 
 async function runBash(ctx, command, opts = {}) {
-  try {
-    const viaService = await runBashViaService(ctx, command, opts);
-    if (viaService) return viaService;
-  } catch (error) {
-    // Fall through to a direct spawn; the service may be absent or reject the call.
-    if (process.env.MYOPS_DEBUG) {
-      ctx?.logger?.warn?.(`dsh-myops: subprocess service failed: ${error?.message ?? error}`);
+  const mode = opts.mode === 'direct' || opts.mode === 'service' ? opts.mode : 'auto';
+  if (mode !== 'direct') {
+    try {
+      const viaService = await runBashViaService(ctx, command, opts);
+      if (viaService) return viaService;
+      if (mode === 'service') {
+        return { ...emptyBashResult({ durationMs: 0 }), mode, error: 'subprocess service unavailable (mode=service; no fallback attempted)' };
+      }
+    } catch (error) {
+      if (mode === 'service') {
+        return { ...emptyBashResult({ durationMs: 0 }), mode, error: `subprocess service failed: ${error?.message ?? error}` };
+      }
+      // Auto mode falls through to a direct spawn; the service may be absent or reject the call.
+      if (process.env.MYOPS_DEBUG) {
+        ctx?.logger?.warn?.(`dsh-myops: subprocess service failed: ${error?.message ?? error}`);
+      }
     }
   }
-  return runBashDirect(command, opts);
+  const result = await runBashDirect(command, opts);
+  return { ...result, mode: mode === 'direct' ? 'direct' : 'direct-fallback' };
 }
 
 function renderBash(value) {
@@ -322,11 +452,19 @@ function renderBash(value) {
   const meta = [];
   if (value.exitCode !== null && value.exitCode !== undefined) meta.push(`exit code: ${value.exitCode}`);
   if (value.signal) meta.push(`signal: ${value.signal}`);
-  if (value.timedOut) meta.push('timed out');
+  if (value.timedOut) {
+    meta.push(Number.isFinite(value.timeoutMs) ? `timed out after ${value.timeoutMs}ms` : 'timed out');
+  } else if (value.mode && value.mode !== 'service') {
+    meta.push(`mode: ${value.mode}`);
+  }
   if (value.stdoutTruncated || value.stderrTruncated) meta.push('output truncated');
   if (value.error) meta.push(`error: ${value.error}`);
   if (value.durationMs != null) meta.push(`${value.durationMs}ms`);
   if (meta.length) lines.push(`[${meta.join(', ')}]`);
+  if (value.timedOut) {
+    lines.push('[timeout] the command was killed; the output above is partial. ' +
+      'Child processes were terminated on a best-effort basis — a few may survive briefly in fallback mode.');
+  }
   let text = lines.join('\n');
   if (!text) text = `[exit code: ${value.exitCode ?? 0}]`;
   return text;
@@ -336,8 +474,8 @@ function renderBash(value) {
 /* file helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-async function readOneFile(filePath, offset, limit) {
-  const abs = isAbsolute(filePath) ? filePath : resolvePath(process.cwd(), filePath);
+async function readOneFile(filePath, offset, limit, base = process.cwd()) {
+  const abs = isAbsolute(filePath) ? filePath : resolvePath(base, filePath);
   const buffer = await readFile(abs);
   const totalBytes = buffer.length;
   const fullText = buffer.toString('utf8');
@@ -498,6 +636,14 @@ async function grepFiles(root, pattern, opts = {}) {
   }
   const matches = [];
   let scanned = 0;
+  let excludeRegex = null;
+  if (opts.exclude) {
+    try {
+      excludeRegex = new RegExp(opts.exclude, flags);
+    } catch (error) {
+      throw new Error(`invalid exclude regular expression: ${error?.message ?? error}`);
+    }
+  }
   for (const rel of files) {
     if (looksBinary(rel)) continue;
     let text;
@@ -513,6 +659,10 @@ async function grepFiles(root, pattern, opts = {}) {
       const line = lines[i];
       regex.lastIndex = 0;
       if (!regex.test(line)) continue;
+      if (excludeRegex) {
+        excludeRegex.lastIndex = 0;
+        if (excludeRegex.test(line)) continue;
+      }
       matches.push(`${rel}:${i + 1}: ${line.trim().slice(0, 400)}`);
       if (matches.length >= MAX_GREP_MATCHES) break;
     }
@@ -527,19 +677,35 @@ async function grepFiles(root, pattern, opts = {}) {
 
 function buildTools(ctx, deps) {
   const { store, dedup } = deps;
+  const outputLimit = Number.isFinite(deps.maxOutputChars) && deps.maxOutputChars > 0
+    ? Math.floor(deps.maxOutputChars)
+    : MAX_OUTPUT_CHARS;
   const bashTool = {
     name: 'ops_bash',
     description:
       'Run a shell command with Git Bash (the Bash shell). Use this instead of PowerShell. ' +
       'Supports pipes, redirection and normal Unix tooling. Returns stdout, stderr and the exit code. ' +
-      'Commands run with full user-level privileges (not confined to the workspace).',
+      'Commands run with full user-level privileges (not confined to the workspace). ' +
+      'On timeout the output is partial and the process tree is terminated (best effort).',
     parameters: {
       type: 'object',
       properties: {
         command: { type: 'string', description: 'The bash command to run.' },
         description: { type: 'string', description: 'Short human-readable description of what the command does.' },
-        workdir: { type: 'string', description: 'Working directory. Defaults to the current directory.' },
+        workdir: { type: 'string', description: 'Working directory. Defaults to the session working directory.' },
         timeoutMs: { type: 'number', description: 'Timeout in milliseconds. Defaults to 120000.' },
+        mode: {
+          type: 'string',
+          enum: ['auto', 'direct', 'service'],
+          description: 'Execution path. auto (default): host subprocess service, falling back to a direct spawn. ' +
+            'direct: force the direct-spawn fallback (useful for reproducing fallback-path bugs). ' +
+            'service: require the host subprocess service; fail instead of falling back.',
+        },
+        login: {
+          type: 'boolean',
+          description: 'Run a login shell (bash -lc) so /etc/profile and the user profile are sourced. ' +
+            'Defaults to false (bash -c, ~140 ms faster per call).',
+        },
       },
       required: ['command'],
       additionalProperties: false,
@@ -549,12 +715,15 @@ function buildTools(ctx, deps) {
     async execute(args, exec) {
       const command = String(args?.command ?? '').trim();
       if (!command) throw new Error('command is required');
+      const sessionDir = await resolveSessionCwd(exec, ctx);
       const result = await runBash(ctx, command, {
-        workdir: args?.workdir,
+        workdir: resolveWorkdir(args?.workdir, sessionDir),
         timeoutMs: args?.timeoutMs,
+        mode: args?.mode,
+        login: args?.login === true,
         signal: exec?.signal,
       });
-      return store.present(renderBash(result), { limit: MAX_OUTPUT_CHARS, label: 'ops_bash' });
+      return store.present(renderBash(result), { limit: outputLimit, label: 'ops_bash' });
     },
   };
 
@@ -569,7 +738,7 @@ function buildTools(ctx, deps) {
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'File path (absolute or relative to the current directory).' },
+        path: { type: 'string', description: 'File path (absolute, or relative to the session working directory).' },
         offset: { type: 'number', description: '1-based line to start from. Defaults to 1.' },
         limit: { type: 'number', description: `Maximum number of lines to return. Defaults to ${DEFAULT_READ_LINES}.` },
         force: { type: 'boolean', description: 'Print the body even if the content is unchanged since the last read.' },
@@ -579,10 +748,11 @@ function buildTools(ctx, deps) {
     },
     output: OUTPUT,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
       const path = String(args?.path ?? '');
       if (!path) throw new Error('path is required');
-      const info = await readOneFile(path, args?.offset, args?.limit);
+      const base = await resolveSessionCwd(exec, ctx);
+      const info = await readOneFile(path, args?.offset, args?.limit, base);
       // Only a whole-file read is worth de-duplicating: a windowed read is an
       // explicit request for that slice.
       if (info.isFullText && args?.force !== true) {
@@ -592,7 +762,7 @@ function buildTools(ctx, deps) {
             '[content omitted; pass force=true to print it]';
         }
       }
-      return store.present(info.text, { limit: MAX_OUTPUT_CHARS, label: 'ops_read' });
+      return store.present(info.text, { limit: outputLimit, label: 'ops_read' });
     },
   };
 
@@ -600,27 +770,44 @@ function buildTools(ctx, deps) {
     name: 'ops_glob',
     description:
       'Find files by glob pattern (e.g. `**/*.ts`, `src/**/*.json`). Returns relative paths, one per line. ' +
-      'Skips .git and node_modules.',
+      'Skips .git and node_modules; symlinks are not followed.',
     parameters: {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: 'Glob pattern.' },
-        path: { type: 'string', description: 'Directory to search. Defaults to the current directory.' },
+        path: { type: 'string', description: 'Directory to search. Defaults to the session working directory.' },
+        stat: {
+          type: 'boolean',
+          description: 'Also report size and mtime for every match (one extra stat per file). Defaults to false.',
+        },
       },
       required: ['pattern'],
       additionalProperties: false,
     },
     output: OUTPUT,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
       const pattern = String(args?.pattern ?? '');
       if (!pattern) throw new Error('pattern is required');
-      const cwd = resolveWorkdir(args?.path);
+      const sessionDir = await resolveSessionCwd(exec, ctx);
+      const cwd = resolveWorkdir(args?.path, sessionDir);
       const results = await expandPatterns([pattern], cwd);
-      return store.present(
-        results.length ? results.join('\n') : `No files matched ${pattern}`,
-        { limit: MAX_OUTPUT_CHARS, label: 'ops_glob' },
-      );
+      let body;
+      if (!results.length) {
+        body = `No files matched ${pattern}`;
+      } else if (args?.stat === true) {
+        body = (await Promise.all(results.map(async (rel) => {
+          try {
+            const st = await fsp.stat(join(cwd, rel));
+            return `${rel} (${st.size} bytes, ${st.mtime.toISOString()})`;
+          } catch {
+            return `${rel} (stat failed)`;
+          }
+        }))).join('\n');
+      } else {
+        body = results.join('\n');
+      }
+      return store.present(body, { limit: outputLimit, label: 'ops_glob' });
     },
   };
 
@@ -628,13 +815,15 @@ function buildTools(ctx, deps) {
     name: 'ops_grep',
     description:
       'Search file contents with a regular expression. Returns `file:line: text` matches. ' +
-      'Skips .git and node_modules.',
+      'Skips .git, node_modules, binary files and files larger than 5 MB. ' +
+      '`include` is a single glob (e.g. `**/*.js`); it is NOT recursive by itself — write `**/` explicitly.',
     parameters: {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: 'Regular expression to search for.' },
-        path: { type: 'string', description: 'Directory to search. Defaults to the current directory.' },
-        include: { type: 'string', description: 'Glob restricting which files are searched (e.g. `**/*.js`).' },
+        path: { type: 'string', description: 'Directory to search. Defaults to the session working directory.' },
+        include: { type: 'string', description: 'Glob restricting which files are searched (e.g. `**/*.js`; `*.js` only matches the top level).' },
+        exclude: { type: 'string', description: 'Regular expression; matching lines are omitted from the results.' },
         caseInsensitive: { type: 'boolean', description: 'Case-insensitive matching.' },
       },
       required: ['pattern'],
@@ -642,18 +831,20 @@ function buildTools(ctx, deps) {
     },
     output: OUTPUT,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
       const pattern = String(args?.pattern ?? '');
       if (!pattern) throw new Error('pattern is required');
-      const cwd = resolveWorkdir(args?.path);
+      const sessionDir = await resolveSessionCwd(exec, ctx);
+      const cwd = resolveWorkdir(args?.path, sessionDir);
       const { matches, scanned, total } = await grepFiles(cwd, pattern, {
         include: args?.include,
+        exclude: args?.exclude,
         caseInsensitive: args?.caseInsensitive,
       });
       if (!matches.length) return `No matches for /${pattern}/ (scanned ${scanned}/${total} files)`;
       return store.present(
         `Matches for /${pattern}/ (scanned ${scanned}/${total} files)\n${matches.join('\n')}`,
-        { limit: MAX_OUTPUT_CHARS, label: 'ops_grep' },
+        { limit: outputLimit, label: 'ops_grep' },
       );
     },
   };
@@ -715,15 +906,18 @@ function mountHiding(ctx, names) {
 /* ------------------------------------------------------------------ */
 
 export function apply(ctx, config = {}) {
+  const maxOutputChars = Number.isFinite(config?.maxOutputChars) && config.maxOutputChars > 0
+    ? Math.floor(config.maxOutputChars)
+    : MAX_OUTPUT_CHARS;
   const store = createSpillStore({ maxEntries: 200 });
   const dedup = createReadDedup({ maxEntries: 512 });
-  const deps = { store, dedup };
+  const deps = { store, dedup, maxOutputChars };
 
   const definitions = [
     ...buildTools(ctx, deps),
-    ...buildWriteTools(deps),
+    ...buildWriteTools({ ...deps, ctx }),
     ...buildResultTool(store),
-    ...buildDocTools(deps),
+    ...buildDocTools({ ...deps, ctx }),
   ];
 
   const registered = [];
