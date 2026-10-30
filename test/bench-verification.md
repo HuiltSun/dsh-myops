@@ -2,7 +2,7 @@
 
 - **时间**：2026-10-31 03:21–03:26（Asia/Shanghai）
 - **环境**：Windows / Node v26.8.1 / Git Bash；工作区 `E:\dsh-myops`；插件 v1.1.0 已装入 desktop profile 并在当前会话注册
-- **结论**：**12/12 工具在真实会话中可用；69/69 效率用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测（见文末“修复后复测”与 v1.2.0/v1.3.0 补充）。
+- **结论**：**12/12 工具在真实会话中可用；78/78 效率/回归用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测（见文末“修复后复测”与 v1.2.0–v1.4.0 补充）。
 
 ## 验证方法
 
@@ -51,7 +51,7 @@
 ## 复现
 
 ```bash
-node test/bench.mjs              # 69 项效率/回归用例，结果写 test/bench-report.json
+node test/bench.mjs              # 78 项效率/回归用例，结果写 test/bench-report.json
 npm test                         # 31 项 smoke
 cd test/doc && node selftest.mjs # 文档解析自测
 ```
@@ -76,7 +76,13 @@ cd test/doc && node selftest.mjs # 文档解析自测
 
 ### 3. 回归
 
-`node test/bench.mjs` 69/69、`node test/smoke.mjs` 31/31、`test/doc/selftest.mjs` 0 失败。
+`node test/bench.mjs` 78/78、`node test/smoke.mjs` 31/31、`test/doc/selftest.mjs` 0 失败。
+
+## v1.4.0 补充（Desktop 设置页）
+
+- 新增 `client.js`（`settings.section`）与 `lib/settings-store.mjs` / `lib/settings-route.mjs`；设置持久化到 `$DSH_HOME/myops-settings.json`。
+- bench 新增 9 个用例：store 校验/落盘、真实 HTTP 路由 GET/POST/跨源 403、修改设置后下一次工具调用即生效（`maxOutputChars` 2000 → 预览）、默认 `bashTimeoutMs=1000` 超时、`client.js` 以模块加载器格式注册 `settings.section`。
+- `hideOfficial` 仍需重启生效；页面会明确提示。
 
 ## v1.3.0 补充（新增 `ops_git`）
 

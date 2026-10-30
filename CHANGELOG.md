@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.4.0 — 2026-10-31
+
+### 新增 Desktop 设置页
+
+- 新增 `client.js`（`dsh.client` 声明，`platform: 'web'`）：在 DSH 设置里注册
+  **`myops 工具`** 分区，可编辑：模型可见输出上限（`maxOutputChars`）、
+  `ops_bash` 默认超时（`bashTimeoutMs`）、屏蔽官方工具
+  （`pwsh`/`read`/`glob`/`grep`，需重启生效）。页面同时显示版本、平台、已注册
+  工具列表与设置文件路径。
+- 新增 `lib/settings-store.mjs`：`$DSH_HOME/myops-settings.json` 持久化，
+  mtime 缓存读取、原子写入、范围校验；损坏/缺失回落插件配置默认值。
+- 新增 `lib/settings-route.mjs`：`GET /api/myops-settings/state` 与
+  `POST /api/myops-settings/configure`，仅接受 localhost + 同源 + JSON 请求。
+- 工具侧：`maxOutputChars`、`bashTimeoutMs` 改为**每次调用读取设置**（即时生效，
+  无需重启）；`hideOfficial` 在插件加载时应用。
+- `package.json`：新增 `./client` 导出、`files` 包含 `client.js`、`dsh.client`
+  声明；`install.ps1` 同步复制 `client.js`。
+
+### 测试
+
+- `test/bench.mjs` 扩展到 78 项：settings store 校验/落盘、真实 HTTP 路由
+  （state/configure/跨源拒绝）、改设置后即时生效、默认 bash 超时、`client.js`
+  模块加载与 `settings.section` 注册。
+
+---
+
 ## v1.3.0 — 2026-10-31
 
 ### 新增工具 `ops_git`

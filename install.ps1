@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 $Source = $PSScriptRoot
 $Target = Join-Path $ProfileDir 'node_modules\dsh-myops'
 $PatchFile = Join-Path $ProfileDir 'cordis.patch.yml'
-$Files = @('package.json', 'index.mjs', 'cordis.patch.yml', 'README.md')
+$Files = @('package.json', 'index.mjs', 'client.js', 'cordis.patch.yml', 'README.md')
 # 子目录（lib/ 等）需要递归复制，否则装到 profile 里会缺模块
 $Directories = @('lib')
 

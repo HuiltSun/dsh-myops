@@ -61,7 +61,7 @@ backup paths, byte counts) plus the copied `dsh-myops/` folder and
 
 ```powershell
 node test/smoke.mjs   # 31 checks: registration, bash, write/edit/stat safety, dedup, glob/grep, spill paging, doc error paths
-node test/bench.mjs   # 69 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git
+node test/bench.mjs   # 78 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page
 ```
 
 `test/bench.mjs` also writes `test/bench-report.json`. Exit code 0 means everything passed.
@@ -105,11 +105,37 @@ DSH desktop app after editing** — `cordis.patch.yml` is not hot-reloaded.
       config:
         hideOfficial: ['pwsh', 'read', 'glob', 'grep']   # optional
         maxOutputChars: 60000                            # optional output cap
+        bashTimeoutMs: 120000                            # optional default bash timeout
+        settingsPath: 'C:\Users\me\.dsh\myops-settings.json'  # optional
 ```
 
 `maxOutputChars` (default 60000) caps the model-visible text of
-`ops_bash`/`ops_read`/`ops_glob`/`ops_grep`; anything larger is spilled to disk and
-served through `ops_result`. It does not change the 2 MB bash capture limit.
+`ops_bash`/`ops_read`/`ops_glob`/`ops_grep`/`ops_git`; anything larger is spilled to
+disk and served through `ops_result`. It does not change the 2 MB bash capture limit.
+`bashTimeoutMs` is the `ops_bash` default when `timeoutMs` is omitted.
+
+Defaults above are only the initial values. Once the **Desktop settings page** saves
+the settings file (`$DSH_HOME/myops-settings.json` by default), the file wins: the
+tools read it on every call (cached by mtime), so `maxOutputChars` and
+`bashTimeoutMs` changes apply immediately without a restart. `hideOfficial` is the
+exception — it is applied when the plugin loads, so toggling it needs a DSH restart.
+
+## Desktop settings page
+
+When installed in a DSH profile that serves the Web/Desktop client, the package also
+ships a client half (`client.js`, declared via `dsh.client` in `package.json`). It
+registers **Settings → `myops 工具`**:
+
+| Control | Meaning |
+| --- | --- |
+| 模型可见输出上限（字符） | `maxOutputChars`, 1,000–2,000,000 |
+| `ops_bash` 默认超时（毫秒） | `bashTimeoutMs`, 1,000–2,147,483,647 |
+| 屏蔽官方工具 `pwsh`/`read`/`glob`/`grep` | `hideOfficial`; restart required |
+
+The page also shows the plugin version, platform, registered tools and the settings
+file path. It talks to `GET /api/myops-settings/state` and
+`POST /api/myops-settings/configure` on the host WebServer; the route accepts only
+localhost Host headers, same-origin requests and JSON bodies (no credentials).
 
 > Note: `ops_bash` runs Git Bash from the DSH host process with the host's full
 > user-level privileges. It is not confined to the workspace by the file sandbox:
@@ -204,6 +230,13 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
   **falls back to a readable "unsupported" message rather than emitting garbled
   text**. Scanned PDFs have no text layer and are not OCR'd.
 
+- **Runtime settings + Desktop page.** `lib/settings-store.mjs` persists
+  `maxOutputChars`/`bashTimeoutMs`/`hideOfficial` to `$DSH_HOME/myops-settings.json`
+  (atomic write, mtime-cached read); `lib/settings-route.mjs` serves the host
+  WebServer API; `client.js` (declared by `dsh.client`) registers the
+  `settings.section` page. Changing the settings file by hand works the same way;
+  a corrupt file falls back to the plugin config defaults.
+
 ## Known limits
 
 - `ops_bash` bypasses DSH's file sandbox and runs with the host's user privileges:
@@ -218,6 +251,12 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
 - `ops_read_docx` reads `word/document.xml` only (no headers/footers, no table
   structure); legacy `.doc` is unsupported; encrypted packages are not decrypted.
 - `ops_read_pdf` is best effort: no OCR, no password/decryption support.
+- The settings page requires a DSH Web/Desktop profile that mounts the `webServer`
+  service; on hosts without it the tools still work and settings can be edited in
+  `myops-settings.json` directly. The `client.js` half only loads after a DSH
+  restart (plugin enablement), and `hideOfficial` changes always need a restart.
+- The settings API is localhost-only: it rejects non-local Host headers, cross-site
+  `sec-fetch-site` and mismatched `Origin`, and accepts JSON bodies ≤ 64 KB.
 - `ops_git` is a compact convenience wrapper, not a full Git client: it exposes
   `status`/`diff`/`log`/`show`/`branch`/`add`/`commit` only. Push, fetch, merge,
   rebase, reset, tag and stash stay in `ops_bash` so the exact command is visible.

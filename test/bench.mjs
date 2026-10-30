@@ -13,12 +13,15 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import http from 'node:http';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { apply } from '../index.mjs';
+import { createSettingsStore, normalizeSettings } from '../lib/settings-store.mjs';
+import { createSettingsRoute } from '../lib/settings-route.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DOC = join(HERE, 'doc');
@@ -446,7 +449,94 @@ for (const [pdf, check] of PDF_CASES) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 14. 会话工作目录绑定（workingDirectory 服务）                        */
+/* 14. 设置页：settings store / HTTP 路由 / 动态上限 / client 加载      */
+/* ------------------------------------------------------------------ */
+{
+  // 14a. store 验证 + 落盘往返
+  const storeFile = join(work, 'settings-store.json');
+  const store = createSettingsStore({ file: storeFile, defaults: { maxOutputChars: 60000, bashTimeoutMs: 120000 } });
+  checkOnly('settings', '默认值来自插件配置', store.read().maxOutputChars === 60000 && store.read().bashTimeoutMs === 120000);
+  store.update({ maxOutputChars: 1234, bashTimeoutMs: 5000, hideOfficial: ['pwsh', 'bogus', 'pwsh'] });
+  const saved = JSON.parse(readFileSync(storeFile, 'utf8'));
+  checkOnly('settings', '校验并丢弃非法 hideOfficial', saved.maxOutputChars === 1234 && saved.bashTimeoutMs === 5000 &&
+    JSON.stringify(saved.hideOfficial) === '["pwsh"]', JSON.stringify(saved));
+  checkOnly('settings', '越界值回落默认', normalizeSettings({ maxOutputChars: 1 }, { maxOutputChars: 60000 }).maxOutputChars === 60000);
+
+  // 14b. HTTP 路由（真实 http 服务）
+  const routeStore = createSettingsStore({ file: join(work, 'route-settings.json') });
+  const route = createSettingsRoute({ store: routeStore, version: 'test-1.4.0', tools: ['ops_bash', 'ops_git'] });
+  const server = http.createServer((req, res) => { void route.handler(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const state = await (await fetch(`${origin}/api/myops-settings/state`)).json();
+    checkOnly('settings', 'GET state', state.version === 'test-1.4.0' && state.settings.maxOutputChars === 60000 &&
+      state.restartRequiredFor.includes('hideOfficial') && state.tools.length === 2, JSON.stringify(state).slice(0, 160));
+    const post = await fetch(`${origin}/api/myops-settings/configure`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin },
+      body: JSON.stringify({ maxOutputChars: 4321, hideOfficial: ['read'] }),
+    });
+    const postBody = await post.json();
+    checkOnly('settings', 'POST configure', post.status === 200 && postBody.settings.maxOutputChars === 4321 &&
+      JSON.stringify(postBody.settings.hideOfficial) === '["read"]' && routeStore.read().maxOutputChars === 4321, JSON.stringify(postBody).slice(0, 160));
+    const cross = await fetch(`${origin}/api/myops-settings/configure`, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example' },
+      body: JSON.stringify({ maxOutputChars: 9999 }),
+    });
+    checkOnly('settings', '拒绝跨源 POST', cross.status === 403, `status=${cross.status}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+
+  // 14c. 动态 maxOutputChars：改设置文件后下一次调用即生效
+  const dynSettingsFile = join(work, 'dyn-settings.json');
+  const dynFile = join(work, 'dyn.txt');
+  writeFileSync(dynFile, Array.from({ length: 500 }, (_, i) => `line ${i + 1} ${'z'.repeat(90)}`).join('\n'));
+  const defs4 = new Map();
+  const ctx4 = {
+    tools: { register: (d) => { defs4.set(d.name, d); return () => {}; }, restrict: () => () => {} },
+    logger: { info: () => {}, warn: () => {} },
+    on: () => {},
+    get: (name) => (name === 'workingDirectory' ? SESSION_CWD_PROVIDER : undefined),
+    effect: (fn) => { fn(); },
+  };
+  apply(ctx4, { settingsPath: dynSettingsFile });
+  const first = String(await defs4.get('ops_read').execute({ path: dynFile }, agentExec));
+  writeFileSync(dynSettingsFile, JSON.stringify({ maxOutputChars: 2000, bashTimeoutMs: 1000 }));
+  const second = String(await defs4.get('ops_read').execute({ path: dynFile, force: true }, agentExec));
+  checkOnly('settings', '保存后立即生效（无需重启）',
+    !first.includes('full output') && second.includes('full output') && second.length < 2500,
+    `first=${first.length}ch second=${second.length}ch`);
+
+  // 14d. 设置里默认 bash 超时（未显式传 timeoutMs）
+  const startedAt = performance.now();
+  const timedText = String(await defs4.get('ops_bash').execute({ command: 'sleep 3' }, agentExec));
+  const timedMs = performance.now() - startedAt;
+  checkOnly('ops_bash', 'settings.bashTimeoutMs 作为默认超时',
+    timedMs < 2500 && /timed out after 1000ms/.test(timedText), `ms=${Math.round(timedMs)}`);
+
+  // 14e. client.js 以 DSH client-plugin 格式加载并注册 settings.section
+  let entry = null;
+  const fakeWindow = { __ModuleLoader__: { load: (value) => { entry = value; } } };
+  new Function('window', readFileSync(join(HERE, '..', 'client.js'), 'utf8'))(fakeWindow);
+  const fakeReact = { createElement: () => null, useEffect: () => {}, useMemo: (fn) => fn(), useState: () => [null, () => {}] };
+  const exportsClient = entry?.factory?.((name) => {
+    if (name === 'react') return fakeReact;
+    throw new Error(`unexpected require: ${name}`);
+  });
+  const registrations = [];
+  const clientCtx = { slots: { inject: (_name, run) => run(), register: (value, component) => { registrations.push({ value, component }); } } };
+  exportsClient?.apply?.(clientCtx);
+  checkOnly('settings', 'client.js 注册 settings.section',
+    entry?.id === 'dsh-myops' && exportsClient?.name === 'myops-settings' && registrations.length === 1 &&
+    registrations[0].value.name === 'settings.section' && registrations[0].value.id === 'myops' &&
+    typeof registrations[0].component === 'function',
+    `registrations=${registrations.length}`);
+}
+
+/* ------------------------------------------------------------------ */
+/* 15. 会话工作目录绑定（workingDirectory 服务）                        */
 /* ------------------------------------------------------------------ */
 const cwdDir = join(work, 'session-cwd');
 mkdirSync(cwdDir, { recursive: true });
@@ -514,7 +604,7 @@ await bench('ops_read_pdf', '会话 cwd：相对 pdf', { path: 'p.pdf' }, {
 SESSION_DIR = process.cwd();
 
 /* ------------------------------------------------------------------ */
-/* 15. 可配置输出上限（plugin config.maxOutputChars）                 */
+/* 16. 可配置输出上限（plugin config.maxOutputChars）                 */
 /* ------------------------------------------------------------------ */
 {
   const defs2 = new Map();
@@ -525,9 +615,9 @@ SESSION_DIR = process.cwd();
     get: (name) => (name === 'workingDirectory' ? SESSION_CWD_PROVIDER : undefined),
     effect: () => {},
   };
-  apply(ctx2, { maxOutputChars: 300 });
+  apply(ctx2, { maxOutputChars: 1500 });
   const capped = String(await defs2.get('ops_read').execute({ path: bigTxt }, agentExec));
-  checkOnly('ops_read', 'config maxOutputChars 生效', capped.length < 900 && /full output .* id=/.test(capped),
+  checkOnly('ops_read', 'config maxOutputChars 生效', capped.length < 3000 && /full output .* id=/.test(capped),
     `chars=${capped.length}`);
 }
 

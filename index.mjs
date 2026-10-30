@@ -34,6 +34,7 @@ import {
   readSync,
   unlinkSync,
   rmdirSync,
+  readFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as fsp from 'node:fs/promises';
@@ -54,6 +55,8 @@ import { createReadDedup } from './lib/read-dedup.mjs';
 import { buildWriteTools } from './lib/write-tools.mjs';
 import { buildDocTools } from './lib/doc-tools.mjs';
 import { buildGitTools } from './lib/git-tools.mjs';
+import { createSettingsStore } from './lib/settings-store.mjs';
+import { createSettingsRoute } from './lib/settings-route.mjs';
 
 const readFile = fsp.readFile;
 const fsGlob = typeof fsp.glob === 'function' ? fsp.glob.bind(fsp) : null;
@@ -678,9 +681,14 @@ async function grepFiles(root, pattern, opts = {}) {
 
 function buildTools(ctx, deps) {
   const { store, dedup } = deps;
-  const outputLimit = Number.isFinite(deps.maxOutputChars) && deps.maxOutputChars > 0
-    ? Math.floor(deps.maxOutputChars)
-    : MAX_OUTPUT_CHARS;
+  const outputLimitNow = () => {
+    const value = deps.settings?.read?.().maxOutputChars;
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : MAX_OUTPUT_CHARS;
+  };
+  const bashDefaultTimeoutNow = () => {
+    const value = deps.settings?.read?.().bashTimeoutMs;
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_BASH_TIMEOUT_MS;
+  };
   const bashTool = {
     name: 'ops_bash',
     description:
@@ -719,12 +727,12 @@ function buildTools(ctx, deps) {
       const sessionDir = await resolveSessionCwd(exec, ctx);
       const result = await runBash(ctx, command, {
         workdir: resolveWorkdir(args?.workdir, sessionDir),
-        timeoutMs: args?.timeoutMs,
+        timeoutMs: args?.timeoutMs ?? bashDefaultTimeoutNow(),
         mode: args?.mode,
         login: args?.login === true,
         signal: exec?.signal,
       });
-      return store.present(renderBash(result), { limit: outputLimit, label: 'ops_bash' });
+      return store.present(renderBash(result), { limit: outputLimitNow(), label: 'ops_bash' });
     },
   };
 
@@ -763,7 +771,7 @@ function buildTools(ctx, deps) {
             '[content omitted; pass force=true to print it]';
         }
       }
-      return store.present(info.text, { limit: outputLimit, label: 'ops_read' });
+      return store.present(info.text, { limit: outputLimitNow(), label: 'ops_read' });
     },
   };
 
@@ -808,7 +816,7 @@ function buildTools(ctx, deps) {
       } else {
         body = results.join('\n');
       }
-      return store.present(body, { limit: outputLimit, label: 'ops_glob' });
+      return store.present(body, { limit: outputLimitNow(), label: 'ops_glob' });
     },
   };
 
@@ -845,7 +853,7 @@ function buildTools(ctx, deps) {
       if (!matches.length) return `No matches for /${pattern}/ (scanned ${scanned}/${total} files)`;
       return store.present(
         `Matches for /${pattern}/ (scanned ${scanned}/${total} files)\n${matches.join('\n')}`,
-        { limit: outputLimit, label: 'ops_grep' },
+        { limit: outputLimitNow(), label: 'ops_grep' },
       );
     },
   };
@@ -906,13 +914,33 @@ function mountHiding(ctx, names) {
 /* plugin entry                                                       */
 /* ------------------------------------------------------------------ */
 
+const PKG = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+  } catch {
+    return { version: '0.0.0' };
+  }
+})();
+
 export function apply(ctx, config = {}) {
-  const maxOutputChars = Number.isFinite(config?.maxOutputChars) && config.maxOutputChars > 0
+  const configuredMax = Number.isFinite(config?.maxOutputChars) && config.maxOutputChars > 0
     ? Math.floor(config.maxOutputChars)
     : MAX_OUTPUT_CHARS;
+  const configuredTimeout = Number.isFinite(config?.bashTimeoutMs) && config.bashTimeoutMs > 0
+    ? Math.floor(config.bashTimeoutMs)
+    : DEFAULT_BASH_TIMEOUT_MS;
+  const configuredHide = Array.isArray(config?.hideOfficial) ? config.hideOfficial.map(String) : [];
+  const settings = createSettingsStore({
+    file: typeof config?.settingsPath === 'string' ? config.settingsPath : undefined,
+    defaults: {
+      maxOutputChars: configuredMax,
+      bashTimeoutMs: configuredTimeout,
+      hideOfficial: configuredHide,
+    },
+  });
   const store = createSpillStore({ maxEntries: 200 });
   const dedup = createReadDedup({ maxEntries: 512 });
-  const deps = { store, dedup, maxOutputChars };
+  const deps = { store, dedup, settings };
 
   const definitions = [
     ...buildTools(ctx, deps),
@@ -938,6 +966,34 @@ export function apply(ctx, config = {}) {
   ctx.logger?.info?.(`dsh-myops: registered ${registered.join(', ')}` +
     (failed.length ? `; failed: ${failed.join(' | ')}` : ''));
 
-  const hideOfficial = Array.isArray(config?.hideOfficial) ? config.hideOfficial : [];
-  mountHiding(ctx, hideOfficial);
+  mountSettingsRoute(ctx, createSettingsRoute({
+    store: settings,
+    version: PKG.version,
+    tools: registered.slice(),
+  }));
+
+  mountHiding(ctx, settings.read().hideOfficial);
+}
+
+/** Register the settings HTTP route when the host exposes a webServer service. */
+function mountSettingsRoute(ctx, route) {
+  try {
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(['webServer'], (owner) => {
+        owner.effect(() => owner.webServer.register(route));
+      });
+      return;
+    }
+  } catch (error) {
+    ctx.logger?.warn?.(`dsh-myops: webServer injection failed: ${error?.message ?? error}`);
+    return;
+  }
+  try {
+    const webServer = ctx.get?.('webServer');
+    if (webServer && typeof webServer.register === 'function' && typeof ctx.effect === 'function') {
+      ctx.effect(() => webServer.register(route));
+    }
+  } catch (error) {
+    ctx.logger?.warn?.(`dsh-myops: could not register settings route: ${error?.message ?? error}`);
+  }
 }
