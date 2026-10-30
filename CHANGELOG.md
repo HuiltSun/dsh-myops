@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.2.1 — 2026-10-31（glob 上限对齐官方）
+
+- `ops_glob` 结果上限 **200 → 100**（`MAX_GLOB_RESULTS`），与官方 `glob` 的
+  `GLOB_MAX_RESULTS = 100` 对齐：此前超出官方上限的场景下，`ops_glob` 反而比它
+  替换掉的官方工具多返回路径、多耗 token。
+- 实测参考：500 文件的全量 glob，旧上限输出 2,559 字符，新上限 1,279 字符，
+  单次省 ~1.3k 字符（≈360 token）。
+
+---
+
 ## v2.2.0 — 2026-10-31（设置页配置档）
 
 - Desktop 设置页顶部新增「配置档（直接选择）」：token-saver / balanced / generous /

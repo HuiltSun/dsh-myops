@@ -125,3 +125,10 @@ cd test/doc && node selftest.mjs # 文档解析自测
 
 - 设置页新增五个配置档按钮（token-saver / balanced / generous / debug-official / quiet-code），点击直接应用并显示当前 ✓；与 configs/myops-presets.json 同源。
 - bench 新增「设置页内置配置档」断言（65 项），smoke 28 项。
+
+## v2.2.1 补充（glob 上限对齐官方）
+
+- `ops_glob` 结果上限 200 → 100（`MAX_GLOB_RESULTS`），与官方 `glob` 的 100 对齐；
+  修正了「大 glob 比被替换的官方工具更耗 token」的反向偏差。
+- 实测：500 文件全量 glob，输出 2559 → 1279 字符，单次省 ~1.3k 字符（≈360 token）。
+- 同步更新 README 默认值表、CHANGELOG、用户手册（v2.2.1）与版本号。

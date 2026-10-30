@@ -144,7 +144,7 @@ Settings → `myops 工具` (or `myops-settings.json`):
 | --- | --- | --- |
 | model-visible output cap | 24000 chars | oversized results spill with a ≤8k-char preview + `ops_result` id |
 | `ops_read` lines | 800 | a 3000-line file returns ~8k chars instead of ~60k |
-| `ops_glob` results | 200 | bounded worst case |
+| `ops_glob` results | 100 | bounded worst case; matches the official `glob` cap so the plugin never returns more paths than the tool it replaces |
 | `ops_grep` matches | 120 | bounded worst case |
 | bash success output | stdout only | no `[exit code: 0, 28ms]` on success; failures/timeouts still print exit code and (slow) timing |
 | `hideOfficial` | all six | removes the official `pwsh`/`read`/`glob`/`grep`/`write`/`edit` so only one tool surface is sent |
