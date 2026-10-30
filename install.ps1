@@ -193,4 +193,4 @@ if ($text -match '(?m)^# dsh-myops:') {
 Write-Host ""
 if ($backupDir) { Write-Host "旧版已备份到: $backupDir" }
 Write-Host "安装完成。重启 DSH 桌面端后开新会话即可使用。"
-Write-Host "工具: ops_bash, ops_read, ops_glob, ops_grep, ops_write, ops_edit, ops_stat, ops_result, ops_read_table, ops_read_docx, ops_read_pdf"
+Write-Host "工具: ops_bash, ops_read, ops_glob, ops_grep, ops_write, ops_edit, ops_stat, ops_result, ops_read_table, ops_read_docx, ops_read_pdf, ops_git"

@@ -12,6 +12,7 @@
  * 结果同时写入 test/bench-report.json（供生成报告）。
  */
 
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -179,7 +180,7 @@ writeFileSync(bigCsv, 'id,name,note\n' + Array.from({ length: 500 }, (_, i) => `
 /* ------------------------------------------------------------------ */
 const EXPECTED = [
   'ops_bash', 'ops_read', 'ops_glob', 'ops_grep', 'ops_write', 'ops_edit',
-  'ops_stat', 'ops_result', 'ops_read_table', 'ops_read_docx', 'ops_read_pdf',
+  'ops_stat', 'ops_result', 'ops_read_table', 'ops_read_docx', 'ops_read_pdf', 'ops_git',
 ];
 const missing = EXPECTED.filter((n) => !defs.has(n));
 if (missing.length) failures.push(`registration missing: ${missing.join(', ')}`);
@@ -394,7 +395,58 @@ for (const [pdf, check] of PDF_CASES) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 13. 会话工作目录绑定（workingDirectory 服务）                        */
+/* 13. ops_git（临时仓库）                                           */
+/* ------------------------------------------------------------------ */
+{
+  let gitBin = null;
+  try { execFileSync('git', ['--version'], { encoding: 'utf8' }); gitBin = 'git'; } catch { gitBin = null; }
+  checkOnly('ops_git', 'git 可用', gitBin !== null, 'git not found on PATH');
+  if (gitBin) {
+    const repo = join(work, 'repo');
+    mkdirSync(repo, { recursive: true });
+    execFileSync(gitBin, ['init', '-q'], { cwd: repo });
+    execFileSync(gitBin, ['config', 'user.email', 'bench@local'], { cwd: repo });
+    execFileSync(gitBin, ['config', 'user.name', 'bench'], { cwd: repo });
+    writeFileSync(join(repo, 'a.txt'), 'hello\n');
+
+    await bench('ops_git', 'status（未跟踪）', { action: 'status', path: repo }, {
+      reps: 1, exec: agentExec,
+      check: (t) => (t.includes('untracked') && t.includes('a.txt') ? true : 'status missed untracked file'),
+    });
+    await bench('ops_git', 'add 显式路径', { action: 'add', path: repo, paths: ['a.txt'] }, {
+      reps: 1, exec: agentExec,
+      check: (t) => (/Staged 1 path\(s\)/.test(t) && /staged: a\.txt/.test(t) ? true : 'add did not stage'),
+    });
+    await bench('ops_git', 'commit', { action: 'commit', path: repo, message: 'bench commit' }, {
+      reps: 1, exec: agentExec,
+      check: (t) => (/Committed [0-9a-f]+ bench commit/.test(t) ? true : 'commit failed'),
+    });
+    await bench('ops_git', 'log', { action: 'log', path: repo, limit: 5 }, {
+      reps: 1, exec: agentExec,
+      check: (t) => (t.includes('bench commit') ? true : 'log missing commit'),
+    });
+    writeFileSync(join(repo, 'a.txt'), 'hello\nworld\n');
+    await bench('ops_git', 'diff --stat', { action: 'diff', path: repo }, {
+      reps: 1, exec: agentExec,
+      check: (t) => (t.includes('a.txt') && /\d+ \+/.test(t) ? true : 'diff stat missing'),
+    });
+    await bench('ops_git', 'diff patch（stat=false）', { action: 'diff', path: repo, stat: false }, {
+      reps: 1, exec: agentExec,
+      check: (t) => (t.includes('+world') ? true : 'patch missing hunk'),
+    });
+    await bench('ops_git', 'branch', { action: 'branch', path: repo }, {
+      reps: 1, exec: agentExec,
+      check: (t) => (/^\*/m.test(t) ? true : 'no current branch marker'),
+    });
+    await bench('ops_git', 'show', { action: 'show', path: repo, ref: 'HEAD' }, {
+      reps: 1, exec: agentExec,
+      check: (t) => (t.includes('bench commit') ? true : 'show missing commit'),
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 14. 会话工作目录绑定（workingDirectory 服务）                        */
 /* ------------------------------------------------------------------ */
 const cwdDir = join(work, 'session-cwd');
 mkdirSync(cwdDir, { recursive: true });
@@ -462,7 +514,7 @@ await bench('ops_read_pdf', '会话 cwd：相对 pdf', { path: 'p.pdf' }, {
 SESSION_DIR = process.cwd();
 
 /* ------------------------------------------------------------------ */
-/* 14. 可配置输出上限（plugin config.maxOutputChars）                 */
+/* 15. 可配置输出上限（plugin config.maxOutputChars）                 */
 /* ------------------------------------------------------------------ */
 {
   const defs2 = new Map();

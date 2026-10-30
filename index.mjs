@@ -53,6 +53,7 @@ import { createSpillStore, buildResultTool } from './lib/output-spill.mjs';
 import { createReadDedup } from './lib/read-dedup.mjs';
 import { buildWriteTools } from './lib/write-tools.mjs';
 import { buildDocTools } from './lib/doc-tools.mjs';
+import { buildGitTools } from './lib/git-tools.mjs';
 
 const readFile = fsp.readFile;
 const fsGlob = typeof fsp.glob === 'function' ? fsp.glob.bind(fsp) : null;
@@ -918,6 +919,7 @@ export function apply(ctx, config = {}) {
     ...buildWriteTools({ ...deps, ctx }),
     ...buildResultTool(store),
     ...buildDocTools({ ...deps, ctx }),
+    ...buildGitTools({ ...deps, ctx }),
   ];
 
   const registered = [];

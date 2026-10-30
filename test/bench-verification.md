@@ -2,7 +2,7 @@
 
 - **时间**：2026-10-31 03:21–03:26（Asia/Shanghai）
 - **环境**：Windows / Node v26.8.1 / Git Bash；工作区 `E:\dsh-myops`；插件 v1.1.0 已装入 desktop profile 并在当前会话注册
-- **结论**：**11/11 工具在真实会话中可用；60/60 效率用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测（见文末“修复后复测”与 v1.2.0 补充）。
+- **结论**：**12/12 工具在真实会话中可用；69/69 效率用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测（见文末“修复后复测”与 v1.2.0/v1.3.0 补充）。
 
 ## 验证方法
 
@@ -51,7 +51,7 @@
 ## 复现
 
 ```bash
-node test/bench.mjs              # 60 项效率用例，结果写 test/bench-report.json
+node test/bench.mjs              # 69 项效率/回归用例，结果写 test/bench-report.json
 npm test                         # 31 项 smoke
 cd test/doc && node selftest.mjs # 文档解析自测
 ```
@@ -76,7 +76,13 @@ cd test/doc && node selftest.mjs # 文档解析自测
 
 ### 3. 回归
 
-`node test/bench.mjs` 60/60、`node test/smoke.mjs` 31/31、`test/doc/selftest.mjs` 0 失败。
+`node test/bench.mjs` 69/69、`node test/smoke.mjs` 31/31、`test/doc/selftest.mjs` 0 失败。
+
+## v1.3.0 补充（新增 `ops_git`）
+
+- 新增 `lib/git-tools.mjs` → `ops_git`：`status/diff/log/show/branch/add/commit`，直接 exec git（无 shell、无网络、无分页器）。
+- bench 在临时仓库上新增 9 个用例（status 未跟踪、add 显式路径、commit、log、diff --stat、diff patch、branch、show）全部通过；提交/暂存都只作用于显式 `paths`。
+- 刻意不提供 push/merge/rebase/reset：这类命令仍在 `ops_bash` 里显式执行。
 
 ## v1.2.0 补充（A+B 批次：文档 + 低风险参数）
 

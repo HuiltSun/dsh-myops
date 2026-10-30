@@ -1,7 +1,7 @@
 # dsh-myops
 
 A small, **dependency-free** replacement for [`dsh-ops`](https://github.com/T-Auto/dsh-ops).
-It gives DSH eleven tools and needs no native binaries and no npm packages.
+It gives DSH twelve tools and needs no native binaries and no npm packages.
 
 | Tool | Purpose |
 | --- | --- |
@@ -16,6 +16,7 @@ It gives DSH eleven tools and needs no native binaries and no npm packages.
 | `ops_read_table` | CSV / TSV with quote handling |
 | `ops_read_docx` | DOCX paragraph text (no npm deps; own ZIP reader) |
 | `ops_read_pdf` | PDF text layer, best effort — returns a diagnostic instead of mojibake |
+| `ops_git` | Compact Git: status / diff / log / show / branch / add / commit (no push-history rewrites) |
 
 It is a plain cordis plugin: `package.json` → `index.mjs`, which exports
 `{ name, inject, apply }` and registers the tools via `ctx.tools.register`.
@@ -60,7 +61,7 @@ backup paths, byte counts) plus the copied `dsh-myops/` folder and
 
 ```powershell
 node test/smoke.mjs   # 31 checks: registration, bash, write/edit/stat safety, dedup, glob/grep, spill paging, doc error paths
-node test/bench.mjs   # 60 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params
+node test/bench.mjs   # 69 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git
 ```
 
 `test/bench.mjs` also writes `test/bench-report.json`. Exit code 0 means everything passed.
@@ -192,6 +193,12 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
   dropped from the results.
 - `ops_stat` accepts `paths: [...]` for batch queries; missing entries report
   `<path>: not found` without failing the whole call.
+- **`ops_git`** runs the resolved Git executable directly (no shell) with
+  `GIT_TERMINAL_PROMPT=0`: `status` summarizes branch/ahead-behind/staged/
+  unstaged/untracked (file lists capped at 40), `diff` defaults to `--stat`
+  (`stat: false` gives a capped patch), `log` is one-line, `show` defaults to
+  `--stat`, `add`/`commit` only touch explicit `paths`. Push and history-changing
+  commands are intentionally left to `ops_bash`.
 - Empty files report `0 lines` consistently in both `ops_read` and `ops_stat`.
 - PDF analysis is best effort: it parses `/ToUnicode` CMaps for CID fonts and
   **falls back to a readable "unsupported" message rather than emitting garbled
@@ -211,3 +218,8 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
 - `ops_read_docx` reads `word/document.xml` only (no headers/footers, no table
   structure); legacy `.doc` is unsupported; encrypted packages are not decrypted.
 - `ops_read_pdf` is best effort: no OCR, no password/decryption support.
+- `ops_git` is a compact convenience wrapper, not a full Git client: it exposes
+  `status`/`diff`/`log`/`show`/`branch`/`add`/`commit` only. Push, fetch, merge,
+  rebase, reset, tag and stash stay in `ops_bash` so the exact command is visible.
+  It runs with the host's Git credentials and has no sandbox of its own; `commit`
+  uses the repository's configured user.name/user.email.

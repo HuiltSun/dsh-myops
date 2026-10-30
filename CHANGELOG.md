@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.3.0 — 2026-10-31
+
+### 新增工具 `ops_git`
+
+- 紧凑的 Git 操作（`action`）：`status` / `diff` / `log` / `show` / `branch` /
+  `add` / `commit`。直接 exec 解析到的 `git`（不经 shell，
+  `GIT_TERMINAL_PROMPT=0`，无颜色/无分页器）。
+- `status`：分支与 ahead/behind（来自 `--porcelain=v1 -b`）、staged/unstaged/
+  untracked/conflict 计数与文件列表（每类最多 40 个）。
+- `diff`：默认 `--stat`；`stat: false` 输出补丁（默认最多 200 行）；`staged` /
+  `file` 可选。`log`：一行式 + decorate，默认 20 条。`show`：默认 `--stat`，
+  `full: true` 输出补丁。`add`/`commit` 只处理显式 `paths`；`commit` 必须给
+  `message`。
+- 刻意不暴露 push/fetch/merge/rebase/reset/tag/stash —— 这些仍通过 `ops_bash`
+  执行，命令对用户可见。
+
+### 测试
+
+- `test/bench.mjs` 扩展到 69 项（新增临时仓库上的 ops_git 9 个用例：status/
+  add/commit/log/diff stat/patch/branch/show）。
+
+---
+
 ## v1.2.0 — 2026-10-31
 
 ### 新增参数与能力

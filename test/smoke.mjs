@@ -53,9 +53,9 @@ const work = mkdtempSync(join(tmpdir(), 'myops-smoke-'));
 console.log('--- registration ---');
 const expected = [
   'ops_bash', 'ops_read', 'ops_glob', 'ops_grep', 'ops_write', 'ops_edit',
-  'ops_stat', 'ops_result', 'ops_read_table', 'ops_read_docx', 'ops_read_pdf',
+  'ops_stat', 'ops_result', 'ops_read_table', 'ops_read_docx', 'ops_read_pdf', 'ops_git',
 ];
-ok('all 11 tools registered', expected.every((n) => defs.has(n)), [...defs.keys()].join(','));
+ok('all 12 tools registered', expected.every((n) => defs.has(n)), [...defs.keys()].join(','));
 
 console.log('--- ops_bash ---');
 const bashOut = String(await T('ops_bash').execute({ command: 'echo SMOKE_OK; pwd' }));
