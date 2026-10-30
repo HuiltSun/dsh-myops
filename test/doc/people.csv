@@ -1,0 +1,6 @@
+name,age,note
+Alice,30,"likes commas, and ""quotes"""
+Bob,25,"multi
+line cell"
+陈小明,40,"hello; semicolon"
+Dana,,plain

@@ -1,0 +1,7 @@
+# dsh-myops bundle patch.
+# Inserts the plugin row. The entry resolves `dsh-myops` from the profile's
+# node_modules; it exports { name, inject, apply } and registers the ops_* tools
+# inside apply(ctx).
+- insert:
+    - id: myops
+      name: dsh-myops

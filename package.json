@@ -1,0 +1,39 @@
+{
+  "name": "dsh-myops",
+  "version": "1.1.0",
+  "description": "Lightweight, dependency-free replacement for dsh-ops: Git Bash, compact read/glob/grep, write/edit/stat, paged spill output, read de-duplication, and CSV/DOCX/PDF readers for DSH on Windows.",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.mjs",
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "bash",
+    "file-tools",
+    "pdf",
+    "docx"
+  ],
+  "license": "MIT"
+}
