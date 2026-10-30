@@ -61,7 +61,7 @@ backup paths, byte counts) plus the copied `dsh-myops/` folder and
 
 ```powershell
 node test/smoke.mjs   # 34 checks: registration, bash, write/edit/stat safety, dedup, glob/grep, spill paging
-node test/bench.mjs   # 65 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page (presets)
+node test/bench.mjs   # 67 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page (presets), tool-definition size snapshot
 ```
 
 `test/bench.mjs` also writes `test/bench-report.json`. Exit code 0 means everything passed.
@@ -77,12 +77,13 @@ What a bench failure means (newcomers):
 | a settings case (`settings …`) | settings store / route wiring |
 | a `mode=` / `exclude` / `stat=` case | the corresponding HTTP-free parameter path |
 
-## Enable tool replacement (hide official tools)
+## Tool replacement (hide official tools)
 
-By default the plugin only *adds* the ops tools; the official `pwsh` / `read` /
-`glob` / `grep` stay visible. To make it a true replacement, edit the appended
-row in **the profile's** `cordis.patch.yml`
-(`%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml`):
+The plugin **hides all six official tools by default** (`pwsh` / `read` / `glob` /
+`grep` / `write` / `edit`), so only one tool surface is sent per request. Tune or
+revert this in the profile's `cordis.patch.yml`
+(`%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml`) or in the Desktop settings
+page; use the `debug-official` preset to keep the official tools for comparison.
 
 ```yaml
 - insert:
@@ -104,21 +105,23 @@ official tools this plugin replaces). **Restart the DSH desktop app after editin
     - id: myops
       name: dsh-myops
       config:
-        hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit']   # optional
+        hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit']   # default; [] keeps both surfaces
         maxOutputChars: 24000                            # optional output cap
+        previewChars: 4000                               # optional spill preview floor
         bashTimeoutMs: 120000                            # optional default bash timeout
         settingsPath: 'C:\Users\me\.dsh\myops-settings.json'  # optional
 ```
 
 `maxOutputChars` (default **24000**) caps the model-visible text of
 `ops_bash`/`ops_read`/`ops_glob`/`ops_grep`/`ops_git`; anything larger is spilled to
-disk and the model only gets a **small preview (≤8k chars)** plus an `ops_result` id.
+disk and the model only gets a **small preview** (default floor `previewChars` =
+**4000** chars, growing to ¼ of the cap) plus an `ops_result` id.
 It does not change the 2 MB bash capture limit.
 `bashTimeoutMs` is the `ops_bash` default when `timeoutMs` is omitted.
 
 Defaults above are only the initial values. Once the **Desktop settings page** saves
 the settings file (`$DSH_HOME/myops-settings.json` by default), the file wins: the
-tools read it on every call (cached by mtime), so `maxOutputChars` and
+tools read it on every call (cached by mtime), so `maxOutputChars`, `previewChars` and
 `bashTimeoutMs` changes apply immediately without a restart. `hideOfficial` is the
 exception — it is applied when the plugin loads, so toggling it needs a DSH restart.
 
@@ -142,16 +145,18 @@ Settings → `myops 工具` (or `myops-settings.json`):
 
 | Default | Value | Effect |
 | --- | --- | --- |
-| model-visible output cap | 24000 chars | oversized results spill with a ≤8k-char preview + `ops_result` id |
+| model-visible output cap | 24000 chars | oversized results spill with a small preview + `ops_result` id |
+| spill preview floor | 4000 chars | `previewChars`; preview = max(floor, cap/4), so big outputs cost far less |
 | `ops_read` lines | 800 | a 3000-line file returns ~8k chars instead of ~60k |
 | `ops_glob` results | 100 | bounded worst case; matches the official `glob` cap so the plugin never returns more paths than the tool it replaces |
 | `ops_grep` matches | 120 | bounded worst case |
 | bash success output | stdout only | no `[exit code: 0, 28ms]` on success; failures/timeouts still print exit code and (slow) timing |
 | `hideOfficial` | all six | removes the official `pwsh`/`read`/`glob`/`grep`/`write`/`edit` so only one tool surface is sent |
 
-Measured: the nine tool definitions total **~6.4k chars (~1.8k tokens)** per request
-(down from ~9.1k / ~2.5k before trimming). Combined with `hideOfficial` this removes
-repeated per-request overhead; large reads now cost ~2.2k tokens instead of ~17k.
+Measured: the nine tool definitions total **~5.5k chars (~1.5k tokens)** per request
+(down from ~6.4k / ~1.8k before this trim, and ~9.1k / ~2.5k two revisions back).
+Combined with `hideOfficial` (on by default) this removes repeated per-request
+overhead; large reads now cost ~2.3k tokens instead of ~17k.
 
 ## Desktop settings page
 
@@ -163,6 +168,7 @@ registers **Settings → `myops 工具`**:
 | --- | --- |
 | 配置档（快速选择） | token-saver / balanced / generous / debug-official / quiet-code，点击即应用 |
 | 模型可见输出上限（字符） | `maxOutputChars`, 1,000–2,000,000 |
+| spill 预览下限（字符） | `previewChars`, 200–200,000（默认 4000，热生效） |
 | `ops_bash` 默认超时（毫秒） | `bashTimeoutMs`, 1,000–2,147,483,647 |
 | 屏蔽官方工具 `pwsh`/`read`/`glob`/`grep`/`write`/`edit` | `hideOfficial`; restart required |
 
@@ -215,8 +221,9 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
   the output is partial; the process tree is terminated on a best-effort basis.
 - **Large output is spilled, not truncated away.** Bash captures up to 2M chars,
   then anything over `maxOutputChars` is written to
-  `%TEMP%\dsh-myops-spill\<id>.txt` and the model gets a small preview (≤8k chars) plus
-  `[full output "ops_bash" id=…; call ops_result(id="…") to page]`.
+  `%TEMP%\dsh-myops-spill\<id>.txt` and the model gets a small preview (floor
+  `previewChars` = 4000, growing to ¼ of the cap) plus
+  `[full output id="…" (…B/… lines); page with ops_result]`.
   `ops_result` pages it back with `offset`/`limit`.
 - **`ops_read` de-duplicates per agent/session.** A whole-file read whose content is
   unchanged since *this agent/session's* previous read returns
@@ -279,7 +286,8 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
 - The spill directory is temporary storage; ids are not durable. Cleanup runs at
   plugin start (7-day TTL) and on write (max 200 entries), not periodically.
 - `ops_grep` is pure JavaScript (no ripgrep): fine for normal repos, slower on
-  very large trees. Files >5 MB are skipped entirely; one file is read at a time.
+  very large trees. Files >5 MB are skipped entirely; one file is read at a time;
+  each matched line is cut at 200 chars.
 - Document formats (CSV / DOCX / XLSX / PPTX / PDF) are not handled here; delegate
   to the DSH `/office` skill family.
 - The settings page requires a DSH Web/Desktop profile that mounts the `webServer`

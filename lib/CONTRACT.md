@@ -71,8 +71,9 @@ export function buildResultTool(store)         // → [ops_result def]
 
 - `store.put(text, { label })` → `{ id, path, bytes, lines }`，把完整内容写到磁盘。
 - `store.read(id, { offset = 1, limit = 500 })` → 带行号的片段 + `[more: offset=N]` 提示。
-- `store.present(text, { limit, label })` → 短文本原样返回；超限时返回
-  截断预览 + `[full output id=xxx, 131072 bytes; call ops_result(id="xxx") to page]`。
+- `store.present(text, { limit, label, previewChars })` → 短文本原样返回；超限时返回
+  小预览 + `[full output id="xxx" (131072B/900 lines); page with ops_result]`。
+  预览 = `max(previewChars, floor(limit/4))`，`previewChars` 由 `settings.previewChars` 传入（默认 4000）。
 - 目录默认 `os.tmpdir()/dsh-myops-spill`；id 用短随机串，文件名安全。
 - 启动时清理超过 `maxAgeMs` 的旧文件（默认 7 天），失败静默。
 - `ops_result` 参数：`{ id, offset?, limit? }`。
@@ -91,7 +92,19 @@ export function createReadDedup(options = {}) // { maxEntries? }
 - `forget(path)`、`reset()`、`size`。
 - 纯内存，LRU 上限默认 512。不要自己读文件，调用方传入已读内容。
 
-### D. 文档类工具（已移除）
+### D. `lib/settings-store.mjs`
+
+```json
+{ "maxOutputChars": 24000, "previewChars": 4000, "bashTimeoutMs": 120000,
+  "hideOfficial": ["pwsh", "read", "glob", "grep", "write", "edit"] }
+```
+
+- `normalizeSettings()` 校验并补默认值：`previewChars` 200–200000，越界回落默认。
+- `hideOfficial` 默认屏蔽全部 6 个官方工具；设置文件存在时以文件为准。
+- `maxOutputChars` / `previewChars` / `bashTimeoutMs` 下一次工具调用生效；
+  `hideOfficial` 在插件加载时应用（需重启）。
+
+### E. 文档类工具（已移除）
 
 `ops_read_table` / `ops_read_docx` / `ops_read_pdf` 已从插件移除。文档（CSV、DOCX、
 XLSX、PPTX、PDF）统一交给 DSH 的 `/office` 系列技能处理；插件只负责代码/文本工具。

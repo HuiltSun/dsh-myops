@@ -143,3 +143,15 @@ cd test/doc && node selftest.mjs # 文档解析自测
 - **`ops_read` 头部输出 `rev <8>`**：读→改→校验可直接把 rev 传给 `expectedRevision`，
   不必再调 `ops_stat`。
 - smoke 28 → 34 项，bench 65 项全通过。
+
+## v2.3.0 补充（token 优化：按 docs/token优化建议.md 实施 P0+P1）
+
+- **P0-1 默认屏蔽官方工具**：`SETTINGS_DEFAULTS.hideOfficial` 改为全部 6 个；presets/设置页同步。
+- **P0-2 描述精简**：9 个工具定义 6411 → **5504 字符（-14%）**；新增 bench 快照断言
+  「工具定义体积 ≤ 5600 字符」。`mode` 参数保留（bench 覆盖 direct/service 路径），描述压成调试用语。
+- **P1-4 spill 预览可配**：`settings.previewChars`（默认 4000，200–200000，热生效），
+  预览 = max(previewChars, cap/4)；`seq 40000` 输出 8110 → **6073 字符**，token-saver 档预览 8000 → 4000。
+- **P1-5 提示瘦身**：`[full output id="…" (…B/… lines); page with ops_result]`，去掉重复 id/label。
+- **P1-6 grep 单行 400 → 200 字符**；**P1-7** 行号按实际宽度补零 + cwd 内相对路径；
+  **P1-8** glob mtime 改 `2026-10-31 02:59`；**P1-9** bash 超时提示删除实现细节。
+- bench 65 → **67** 项，smoke 34 项全通过；设置页新增 previewChars 输入框。

@@ -4,6 +4,7 @@
  * Registers one Settings section: `myops 工具`. It edits the persisted settings
  * file served by the host half (`/api/myops-settings`):
  *   - maxOutputChars : model-visible output cap for ops_bash/read/glob/grep/git
+ *   - previewChars   : spill preview floor (chars) for oversized outputs
  *   - bashTimeoutMs  : default ops_bash timeout when `timeoutMs` is omitted
  *   - hideOfficial   : official pwsh/read/glob/grep hidden by the plugin (needs restart)
  *
@@ -28,11 +29,11 @@ window.__ModuleLoader__.load({
       ['edit', 'edit（官方编辑）'],
     ];
     const PRESETS = [
-      { id: 'token-saver', label: '极致省 token', settings: { maxOutputChars: 12000, bashTimeoutMs: 120000, hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit'] } },
-      { id: 'balanced', label: '均衡', settings: { maxOutputChars: 24000, bashTimeoutMs: 120000, hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit'] } },
-      { id: 'generous', label: '宽松（大输出）', settings: { maxOutputChars: 60000, bashTimeoutMs: 300000, hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit'] } },
-      { id: 'debug-official', label: '调试（保留官方工具）', settings: { maxOutputChars: 60000, bashTimeoutMs: 120000, hideOfficial: [] } },
-      { id: 'quiet-code', label: '只隐藏读类工具', settings: { maxOutputChars: 24000, bashTimeoutMs: 120000, hideOfficial: ['read', 'glob', 'grep'] } },
+      { id: 'token-saver', label: '极致省 token', settings: { maxOutputChars: 12000, previewChars: 3000, bashTimeoutMs: 120000, hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit'] } },
+      { id: 'balanced', label: '均衡', settings: { maxOutputChars: 24000, previewChars: 4000, bashTimeoutMs: 120000, hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit'] } },
+      { id: 'generous', label: '宽松（大输出）', settings: { maxOutputChars: 60000, previewChars: 8000, bashTimeoutMs: 300000, hideOfficial: ['pwsh', 'read', 'glob', 'grep', 'write', 'edit'] } },
+      { id: 'debug-official', label: '调试（保留官方工具）', settings: { maxOutputChars: 60000, previewChars: 4000, bashTimeoutMs: 120000, hideOfficial: [] } },
+      { id: 'quiet-code', label: '只隐藏读类工具', settings: { maxOutputChars: 24000, previewChars: 4000, bashTimeoutMs: 120000, hideOfficial: ['read', 'glob', 'grep'] } },
     ];
     const labelStyle = { fontSize: 13, color: 'var(--dsw-alias-label-secondary)', margin: 0 };
     const mutedStyle = { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', margin: 0 };
@@ -88,7 +89,7 @@ window.__ModuleLoader__.load({
     function Page() {
       const api = useMemo(() => createTransport(globalThis), []);
       const [state, setState] = useState(null);
-      const [draft, setDraft] = useState({ maxOutputChars: '', bashTimeoutMs: '', hideOfficial: [] });
+      const [draft, setDraft] = useState({ maxOutputChars: '', previewChars: '', bashTimeoutMs: '', hideOfficial: [] });
       const [status, setStatus] = useState({ kind: 'loading', message: '正在读取设置…' });
       const [saving, setSaving] = useState(false);
       const [initialHide, setInitialHide] = useState('[]');
@@ -100,6 +101,7 @@ window.__ModuleLoader__.load({
           setInitialHide(JSON.stringify(next.settings.hideOfficial));
           setDraft({
             maxOutputChars: String(next.settings.maxOutputChars),
+            previewChars: String(next.settings.previewChars ?? 4000),
             bashTimeoutMs: String(next.settings.bashTimeoutMs),
             hideOfficial: next.settings.hideOfficial,
           });
@@ -121,9 +123,14 @@ window.__ModuleLoader__.load({
 
       async function save() {
         const maxOutputChars = Number(draft.maxOutputChars);
+        const previewChars = Number(draft.previewChars);
         const bashTimeoutMs = Number(draft.bashTimeoutMs);
         if (!Number.isSafeInteger(maxOutputChars) || maxOutputChars < 1_000 || maxOutputChars > 2_000_000) {
           setStatus({ kind: 'error', message: '输出上限需为 1,000 – 2,000,000 的整数。' });
+          return;
+        }
+        if (!Number.isSafeInteger(previewChars) || previewChars < 200 || previewChars > 200_000) {
+          setStatus({ kind: 'error', message: '预览字符数需为 200 – 200,000 的整数。' });
           return;
         }
         if (!Number.isSafeInteger(bashTimeoutMs) || bashTimeoutMs < 1_000 || bashTimeoutMs > 2_147_483_647) {
@@ -133,10 +140,11 @@ window.__ModuleLoader__.load({
         setSaving(true);
         setStatus({ kind: 'saving', message: '正在保存…' });
         try {
-          const saved = await api.save({ maxOutputChars, bashTimeoutMs, hideOfficial: draft.hideOfficial });
+          const saved = await api.save({ maxOutputChars, previewChars, bashTimeoutMs, hideOfficial: draft.hideOfficial });
           setState((value) => ({ ...value, settings: saved.settings }));
           setDraft({
             maxOutputChars: String(saved.settings.maxOutputChars),
+            previewChars: String(saved.settings.previewChars),
             bashTimeoutMs: String(saved.settings.bashTimeoutMs),
             hideOfficial: saved.settings.hideOfficial,
           });
@@ -163,6 +171,7 @@ window.__ModuleLoader__.load({
           setState((value) => ({ ...value, settings: saved.settings }));
           setDraft({
             maxOutputChars: String(saved.settings.maxOutputChars),
+            previewChars: String(saved.settings.previewChars),
             bashTimeoutMs: String(saved.settings.bashTimeoutMs),
             hideOfficial: saved.settings.hideOfficial,
           });
@@ -216,6 +225,17 @@ window.__ModuleLoader__.load({
             onChange: (event) => setDraft({ ...draft, maxOutputChars: event.target.value }),
           }),
           h('p', { style: mutedStyle }, '超过上限的输出会落盘，模型只收到小预览，可用 ops_result 翻页。默认 24000。'),
+        ),
+        h('div', { style: cardStyle },
+          h('label', { style: { ...labelStyle, fontWeight: 600 } }, 'spill 预览下限（字符）'),
+          h('input', {
+            type: 'number', min: 200, max: 200000, step: 500, style: fieldStyle,
+            'aria-label': 'spill 预览下限（字符）',
+            value: draft.previewChars,
+            disabled: saving,
+            onChange: (event) => setDraft({ ...draft, previewChars: event.target.value }),
+          }),
+          h('p', { style: mutedStyle }, '大输出的预览长度下限（还会随输出上限按 1/4 增长）。默认 4000；调小省 token，但翻页次数会增加。'),
         ),
         h('div', { style: cardStyle },
           h('label', { style: { ...labelStyle, fontWeight: 600 } }, 'ops_bash 默认超时（毫秒）'),

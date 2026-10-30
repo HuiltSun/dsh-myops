@@ -3,10 +3,11 @@
   "description": "dsh-myops 配置档。把 presets.<name>.settings 的内容直接写入 ~/.dsh/myops-settings.json 即可；也可运行 `node scripts/apply-preset.mjs <name>` 一键应用。",
   "settingsPath": "~/.dsh/myops-settings.json",
   "notes": [
-    "maxOutputChars: 模型可见输出上限（1000–2000000 字符），输出超限时只回 ≤8k 字符预览 + ops_result id。",
+    "maxOutputChars: 模型可见输出上限（1000–2000000 字符），输出超限时只回 ≤previewChars 字符预览 + ops_result id。",
+    "previewChars: spill 预览下限（200–200000 字符，默认 4000），调小可再省首屏 token，代价是翻页次数增加。",
     "bashTimeoutMs: ops_bash 未显式传 timeoutMs 时的默认超时（毫秒）。",
-    "hideOfficial: 屏蔽官方工具（可选项：pwsh/read/glob/grep/write/edit），修改后需要重启 DSH 桌面端。",
-    "修改 maxOutputChars / bashTimeoutMs 会立即生效（下一次工具调用），无需重启。"
+    "hideOfficial: 屏蔽官方工具（可选项：pwsh/read/glob/grep/write/edit），默认屏蔽全部 6 个；修改后需要重启 DSH 桌面端。",
+    "修改 maxOutputChars / previewChars / bashTimeoutMs 会立即生效（下一次工具调用），无需重启。"
   ],
   "presets": {
     "token-saver": {
@@ -14,15 +15,17 @@
       "description": "输出上限 12000，隐藏全部 6 个官方工具；适合长会话、以读代码/小命令为主的场景。",
       "settings": {
         "maxOutputChars": 12000,
+        "previewChars": 3000,
         "bashTimeoutMs": 120000,
         "hideOfficial": ["pwsh", "read", "glob", "grep", "write", "edit"]
       }
     },
     "balanced": {
       "label": "均衡（当前默认）",
-      "description": "输出上限 24000，隐藏全部 6 个官方工具；日常开发推荐。",
+      "description": "输出上限 24000、预览 4000，隐藏全部 6 个官方工具；日常开发推荐。",
       "settings": {
         "maxOutputChars": 24000,
+        "previewChars": 4000,
         "bashTimeoutMs": 120000,
         "hideOfficial": ["pwsh", "read", "glob", "grep", "write", "edit"]
       }
@@ -32,6 +35,7 @@
       "description": "输出上限 60000、默认超时 5 分钟；适合需要一次性读大文件/跑长命令的场景。",
       "settings": {
         "maxOutputChars": 60000,
+        "previewChars": 8000,
         "bashTimeoutMs": 300000,
         "hideOfficial": ["pwsh", "read", "glob", "grep", "write", "edit"]
       }
@@ -41,15 +45,17 @@
       "description": "不隐藏官方工具、输出上限 60000；适合排查 ops_* 与官方工具的行为差异。",
       "settings": {
         "maxOutputChars": 60000,
+        "previewChars": 4000,
         "bashTimeoutMs": 120000,
         "hideOfficial": []
       }
     },
     "quiet-code": {
       "label": "只隐藏读类工具",
-      "description": "只隐藏 read/glob/grep（保留官方 write/edit），输出上限 24000；适合仍在用官方编辑/写文件的混合工作流。",
+      "description": "只隐藏 read/glob/grep（保留官方 write/edit），输出上限 24000；注意：官方 edit 需要官方 read 观测，混用时会被拒，建议改用 balanced。",
       "settings": {
         "maxOutputChars": 24000,
+        "previewChars": 4000,
         "bashTimeoutMs": 120000,
         "hideOfficial": ["read", "glob", "grep"]
       }

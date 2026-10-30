@@ -188,6 +188,12 @@ const missing = EXPECTED.filter((n) => !defs.has(n));
 if (missing.length) failures.push(`registration missing: ${missing.join(', ')}`);
 if (defs.size !== EXPECTED.length) failures.push(`registered ${defs.size} tools, expected ${EXPECTED.length}`);
 
+// 工具定义体积快照：防文案默默膨胀（每轮请求都要重发）。
+const definitionChars = JSON.stringify([...defs.values()].map(({ name, description, parameters }) => ({
+  name, description, parameters,
+}))).length;
+checkOnly('registration', '工具定义体积 ≤ 5600 字符', definitionChars <= 5600, `chars=${definitionChars}`);
+
 /* ------------------------------------------------------------------ */
 /* 1. ops_bash                                                         */
 /* ------------------------------------------------------------------ */
@@ -204,6 +210,7 @@ const spillOut = await bench('ops_bash', 'seq 40000（触发 spill）', { comman
   check: (t) => {
     if (!/id="([0-9a-f]+)"/.test(t)) return 'no spill id in output';
     if (!/\[full output/.test(t)) return 'no full-output hint';
+    if (t.length > 7000) return `spill preview too large: ${t.length} chars`;
     return true;
   },
 });
@@ -276,7 +283,7 @@ await bench('ops_glob', 'README/CHANGELOG 列表', { pattern: '*.md', path: proc
 });
 await bench('ops_glob', 'stat=true 返回元信息', { pattern: '*.md', path: process.cwd(), stat: true }, {
   reps: 3,
-  check: (t) => (/README\.md \(\d+ bytes, .+Z\)/.test(t) ? true : 'no size/mtime in glob output'),
+  check: (t) => (/README\.md \(\d+B, \d{4}-\d{2}-\d{2} \d{2}:\d{2}\)/.test(t) ? true : 'no size/mtime in glob output'),
 });
 
 /* ------------------------------------------------------------------ */
@@ -416,10 +423,24 @@ if (spillId) {
 /* 14. 设置页：settings store / HTTP 路由 / 动态上限 / client 加载      */
 /* ------------------------------------------------------------------ */
 {
-  // 14a. store 验证 + 落盘往返
+  // 14a. 默认 apply 就把 6 个官方工具交给 restrict（未显式配置 hideOfficial 时）
+  const hides = [];
+  const fakeAgent = { ctx: { tools: { restrict: (opts) => { hides.push(opts); return () => {}; } } } };
+  const ctx5 = {
+    tools: { register: () => () => {}, restrict: () => () => {} },
+    logger: { info: () => {}, warn: () => {} },
+    on: () => {},
+    get: (name) => (name === 'agents' ? { list: () => [fakeAgent] } : (name === 'workingDirectory' ? SESSION_CWD_PROVIDER : undefined)),
+    effect: () => {},
+  };
+  apply(ctx5, { settingsPath: join(work, 'hide-default.json') });
+  checkOnly('settings', '默认 apply 隐藏 6 个官方工具', hides.length === 1 && hides[0]?.deny?.length === 6 && hides[0].deny.includes('pwsh'), JSON.stringify(hides).slice(0, 120));
+
+  // 14b. store 验证 + 落盘往返
   const storeFile = join(work, 'settings-store.json');
   const store = createSettingsStore({ file: storeFile, defaults: { maxOutputChars: 60000, bashTimeoutMs: 120000 } });
-  checkOnly('settings', '默认值来自插件配置', store.read().maxOutputChars === 60000 && store.read().bashTimeoutMs === 120000);
+  checkOnly('settings', '默认值来自插件配置', store.read().maxOutputChars === 60000 && store.read().bashTimeoutMs === 120000 &&
+    store.read().previewChars === 4000 && store.read().hideOfficial.length === 6);
   store.update({ maxOutputChars: 1234, bashTimeoutMs: 5000, hideOfficial: ['pwsh', 'bogus', 'pwsh'] });
   const saved = JSON.parse(readFileSync(storeFile, 'utf8'));
   checkOnly('settings', '校验并丢弃非法 hideOfficial', saved.maxOutputChars === 1234 && saved.bashTimeoutMs === 5000 &&
@@ -435,6 +456,8 @@ if (spillId) {
   try {
     const state = await (await fetch(`${origin}/api/myops-settings/state`)).json();
     checkOnly('settings', 'GET state', state.version === 'test-1.4.0' && state.settings.maxOutputChars === 24000 &&
+      state.settings.previewChars === 4000 &&
+      JSON.stringify(state.settings.hideOfficial) === '["pwsh","read","glob","grep","write","edit"]' &&
       state.restartRequiredFor.includes('hideOfficial') && state.tools.length === 2, JSON.stringify(state).slice(0, 160));
     const post = await fetch(`${origin}/api/myops-settings/configure`, {
       method: 'POST',
@@ -569,7 +592,7 @@ SESSION_DIR = process.cwd();
   };
   apply(ctx2, { maxOutputChars: 1500, settingsPath: join(work, 'cfg-settings.json') });
   const capped = String(await defs2.get('ops_read').execute({ path: bigTxt }, agentExec));
-  checkOnly('ops_read', 'config maxOutputChars 生效', capped.length < 3000 && /full output .* id=/.test(capped),
+  checkOnly('ops_read', 'config maxOutputChars 生效', capped.length < 3000 && /full output id="/.test(capped),
     `chars=${capped.length}`);
 }
 

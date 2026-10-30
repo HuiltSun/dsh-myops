@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.3.0 — 2026-10-31（token 优化：默认屏蔽官方工具 + 描述精简 + 预览可配）
+
+### P0 · 每轮固定开销
+
+- **`hideOfficial` 默认屏蔽全部 6 个官方工具**（`SETTINGS_DEFAULTS`、各配置档对齐）：
+  默认安装不再同时携带两套 schema；需要对照官方工具时用 `debug-official` 预设。
+- **精简 9 个工具描述/参数描述**：定义总字符 6411 → **5504（-14%）**。
+  删除返回值格式、实现细节与重复长句；`path` 统一为 `Path.` / `Dir (default: session cwd).`；
+  `mode` 保留为调试参数但描述压成 `debug: force execution path.`
+
+### P1 · 输出体积
+
+- **spill 预览可配**：新增 `settings.previewChars`（默认 **4000**，200–200000，热生效），
+  预览改为 `max(previewChars, cap/4)`；默认 24000 上限下预览 8000 → **6000**，
+  token-saver（12000）下 8000 → **4000**；`seq 40000` 实测 8110 → **6073 字符**。
+- **spill 提示瘦身**：`[full output id="…" (…B/… lines); page with ops_result]`，
+  去掉重复 id 与 label，每次 spill 省 ~40 字符。
+- **`ops_grep` 单行截断 400 → 200 字符**，避免 120 命中 × 400 字符必炸 24k 上限。
+- **`ops_read` 显示瘦身**：行号按实际宽度补零（不再固定 4 位）；会话 cwd 内的文件头部
+  改用相对路径。
+- **`ops_glob(stat:true)`**：`(1234B, 2026-10-31 02:59)`，不再输出毫秒级 ISO 时间。
+- **bash 超时提示**：删除「子进程 best-effort 终止」实现细节句。
+
+### 其它
+
+- 设置页新增「spill 预览下限」输入框；`configs/myops-presets.json` 与页面内置配置档同步
+  `previewChars`；`quiet-code` 描述标注「官方 edit 需要官方 read 观测，混用会被拒」。
+- bench 新增「工具定义体积 ≤ 5600 字符」快照断言与「默认 apply 隐藏 6 个官方工具」（65 → **67** 项），smoke 34 项。
+
+---
+
 ## v2.2.2 — 2026-10-31（读写冲突修复）
 
 - **读去重按智能体/会话隔离**（`ops_read`）：此前去重状态是全局一份，A（子智能体/队友）

@@ -472,8 +472,7 @@ function renderBash(value) {
   }
   if (meta.length) lines.push(`[${meta.join(', ')}]`);
   if (value.timedOut) {
-    lines.push('[timeout] the command was killed; the output above is partial. ' +
-      'Child processes were terminated on a best-effort basis — a few may survive briefly in fallback mode.');
+    lines.push('[timeout] the command was killed; the output above is partial.');
   }
   let text = lines.join('\n');
   if (!text) text = failed ? `[exit code: ${value.exitCode}]` : '[ok]';
@@ -500,10 +499,16 @@ async function readOneFile(filePath, offset, limit, base = process.cwd()) {
   const revision = hashText(fullText);
   const width = String(Math.max(end, 1)).length;
   const numbered = slice
-    .map((line, i) => `${String(start + i).padStart(Math.max(4, width))}| ${line}`)
+    .map((line, i) => `${String(start + i).padStart(width)}| ${line}`)
     .join('\n');
   const windowed = start > 1 || end < lines.length;
-  const header = `File: ${toPosix(abs)} (${lines.length} lines, ${totalBytes} bytes, rev ${revision.slice(0, 8)})` +
+  // 会话 cwd 内的文件用相对路径显示：长路径仓库每次读取省几十字符。
+  let shown = toPosix(abs);
+  try {
+    const rel = relative(base, abs);
+    if (rel && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)) shown = toPosix(rel);
+  } catch { /* keep absolute path */ }
+  const header = `File: ${shown} (${lines.length} lines, ${totalBytes} bytes, rev ${revision.slice(0, 8)})` +
     (windowed ? `, showing ${start}-${end}` : '');
   const hint = windowed && end < lines.length
     ? `\n[truncated: pass offset=${end + 1} to continue]`
@@ -675,7 +680,7 @@ async function grepFiles(root, pattern, opts = {}) {
         excludeRegex.lastIndex = 0;
         if (excludeRegex.test(line)) continue;
       }
-      matches.push(`${rel}:${i + 1}: ${line.trim().slice(0, 400)}`);
+      matches.push(`${rel}:${i + 1}: ${line.trim().slice(0, 200)}`);
       if (matches.length >= MAX_GREP_MATCHES) break;
     }
     if (matches.length >= MAX_GREP_MATCHES) break;
@@ -720,19 +725,22 @@ function buildTools(ctx, deps) {
     const value = deps.settings?.read?.().bashTimeoutMs;
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_BASH_TIMEOUT_MS;
   };
+  const previewNow = () => {
+    const value = deps.settings?.read?.().previewChars;
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 4_000;
+  };
   const bashTool = {
     name: 'ops_bash',
     description:
-      'Run a shell command with Git Bash. Returns stdout, stderr and the exit code; full user privileges, not sandboxed. ' +
-      'On timeout the output is partial and the process tree is terminated.',
+      'Run a shell command with Git Bash (unsandboxed). Returns stdout/stderr and exit code; timeout output is partial.',
     parameters: {
       type: 'object',
       properties: {
         command: { type: 'string', description: 'Bash command.' },
-        workdir: { type: 'string', description: 'Defaults to the session working directory.' },
+        workdir: { type: 'string', description: 'Dir (default: session cwd).' },
         timeoutMs: { type: 'number', description: 'Default 120000.' },
-        mode: { type: 'string', enum: ['auto', 'direct', 'service'], description: 'auto: service then direct; direct: force fallback; service: require service.' },
-        login: { type: 'boolean', description: 'Use bash -lc (sources profile). Default false (bash -c, faster).' },
+        mode: { type: 'string', enum: ['auto', 'direct', 'service'], description: 'debug: force execution path.' },
+        login: { type: 'boolean', description: 'Load profile env (slower).' },
       },
       required: ['command'],
       additionalProperties: false,
@@ -750,22 +758,22 @@ function buildTools(ctx, deps) {
         login: args?.login === true,
         signal: exec?.signal,
       });
-      return store.present(renderBash(result), { limit: outputLimitNow(), label: 'ops_bash' });
+      return store.present(renderBash(result), { limit: outputLimitNow(), label: 'ops_bash', previewChars: previewNow() });
     },
   };
 
   const readTool = {
     name: 'ops_read',
     description:
-      'Read a text file with line numbers. Whole-file reads are de-duplicated (pass force=true to reprint); ' +
-      `windowed reads always print. Defaults to the first ${DEFAULT_READ_LINES} lines.`,
+      'Read a text file with line numbers. Whole-file repeats are de-duplicated (force=true to reprint); ' +
+      `default ${DEFAULT_READ_LINES} lines.`,
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute or session-relative path.' },
+        path: { type: 'string', description: 'Path.' },
         offset: { type: 'number', description: '1-based start line.' },
         limit: { type: 'number', description: `Max lines (default ${DEFAULT_READ_LINES}).` },
-        force: { type: 'boolean', description: 'Re-print even if unchanged.' },
+        force: { type: 'boolean', description: 'Print even if unchanged.' },
       },
       required: ['path'],
       additionalProperties: false,
@@ -786,20 +794,20 @@ function buildTools(ctx, deps) {
             '[content omitted; pass force=true to print it]';
         }
       }
-      return store.present(info.text, { limit: outputLimitNow(), label: 'ops_read' });
+      return store.present(info.text, { limit: outputLimitNow(), label: 'ops_read', previewChars: previewNow() });
     },
   };
 
   const globTool = {
     name: 'ops_glob',
     description:
-      'Find files by glob pattern. Returns relative paths; skips .git/node_modules; symlinks not followed.',
+      'Find files by glob. Skips .git/node_modules; no symlinks.',
     parameters: {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: 'Glob pattern.' },
-        path: { type: 'string', description: 'Defaults to session working directory.' },
-        stat: { type: 'boolean', description: 'Add size and mtime per match.' },
+        path: { type: 'string', description: 'Dir (default: session cwd).' },
+        stat: { type: 'boolean', description: 'Add size and mtime.' },
       },
       required: ['pattern'],
       additionalProperties: false,
@@ -819,7 +827,8 @@ function buildTools(ctx, deps) {
         body = (await Promise.all(results.map(async (rel) => {
           try {
             const st = await fsp.stat(join(cwd, rel));
-            return `${rel} (${st.size} bytes, ${st.mtime.toISOString()})`;
+            const when = st.mtime.toISOString().slice(0, 16).replace('T', ' ');
+            return `${rel} (${st.size}B, ${when})`;
           } catch {
             return `${rel} (stat failed)`;
           }
@@ -827,21 +836,21 @@ function buildTools(ctx, deps) {
       } else {
         body = results.join('\n');
       }
-      return store.present(body, { limit: outputLimitNow(), label: 'ops_glob' });
+      return store.present(body, { limit: outputLimitNow(), label: 'ops_glob', previewChars: previewNow() });
     },
   };
 
   const grepTool = {
     name: 'ops_grep',
     description:
-      'Search file contents with a regex. Returns file:line: text. Skips .git/node_modules, binaries and >5 MB files.',
+      'Search file contents by regex. Returns file:line: text; skips .git/node_modules, binaries and >5 MB files.',
     parameters: {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: 'Regular expression.' },
-        path: { type: 'string', description: 'Defaults to session working directory.' },
-        include: { type: 'string', description: 'Glob filter; not recursive unless `**/` is used.' },
-        exclude: { type: 'string', description: 'Regex; matching lines are omitted.' },
+        path: { type: 'string', description: 'Dir or file (default: session cwd).' },
+        include: { type: 'string', description: 'Glob filter (recursive via `**/`).' },
+        exclude: { type: 'string', description: 'Regex; matching lines omitted.' },
         caseInsensitive: { type: 'boolean', description: 'Case-insensitive.' },
       },
       required: ['pattern'],
@@ -862,7 +871,7 @@ function buildTools(ctx, deps) {
       if (!matches.length) return `No matches for /${pattern}/ (scanned ${scanned}/${total} files)`;
       return store.present(
         `Matches for /${pattern}/ (scanned ${scanned}/${total} files)\n${matches.join('\n')}`,
-        { limit: outputLimitNow(), label: 'ops_grep' },
+        { limit: outputLimitNow(), label: 'ops_grep', previewChars: previewNow() },
       );
     },
   };
@@ -938,13 +947,15 @@ export function apply(ctx, config = {}) {
   const configuredTimeout = Number.isFinite(config?.bashTimeoutMs) && config.bashTimeoutMs > 0
     ? Math.floor(config.bashTimeoutMs)
     : DEFAULT_BASH_TIMEOUT_MS;
-  const configuredHide = Array.isArray(config?.hideOfficial) ? config.hideOfficial.map(String) : [];
+  const configuredHide = Array.isArray(config?.hideOfficial) ? config.hideOfficial.map(String) : undefined;
   const settings = createSettingsStore({
     file: typeof config?.settingsPath === 'string' ? config.settingsPath : undefined,
     defaults: {
       maxOutputChars: configuredMax,
       bashTimeoutMs: configuredTimeout,
-      hideOfficial: configuredHide,
+      // 未显式配置时用 SETTINGS_DEFAULTS（默认屏蔽全部 6 个官方工具）；
+      // 只有显式传 hideOfficial: [] 才保留两套工具面。
+      ...(configuredHide ? { hideOfficial: configuredHide } : {}),
     },
   });
   const store = createSpillStore({ maxEntries: 200 });

@@ -7,8 +7,8 @@
  *   node scripts/apply-preset.mjs balanced --dry-run
  *
  * Writes `$DSH_HOME/myops-settings.json` (default ~/.dsh/myops-settings.json),
- * backing up the current file first. `maxOutputChars`/`bashTimeoutMs` take effect
- * on the next tool call; `hideOfficial` needs a DSH desktop restart.
+ * backing up the current file first. `maxOutputChars`/`previewChars`/`bashTimeoutMs`
+ * take effect on the next tool call; `hideOfficial` needs a DSH desktop restart.
  */
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -31,7 +31,7 @@ function showList() {
         const s = preset.settings;
         console.log(
             `${key.padEnd(14)} ${preset.label}\n` +
-            `  maxOutputChars=${s.maxOutputChars}  bashTimeoutMs=${s.bashTimeoutMs}  ` +
+            `  maxOutputChars=${s.maxOutputChars}  previewChars=${s.previewChars}  bashTimeoutMs=${s.bashTimeoutMs}  ` +
             `hideOfficial=[${s.hideOfficial.join(',') || 'none'}]\n` +
             `  ${preset.description}`,
         );
@@ -43,13 +43,15 @@ function validate(settings) {
     const errors = [];
     const max = Number(settings.maxOutputChars);
     const timeout = Number(settings.bashTimeoutMs);
+    const preview = Number(settings.previewChars);
     if (!Number.isSafeInteger(max) || max < 1000 || max > 2000000) errors.push('maxOutputChars must be 1000..2000000');
+    if (!Number.isSafeInteger(preview) || preview < 200 || preview > 200000) errors.push('previewChars must be 200..200000');
     if (!Number.isSafeInteger(timeout) || timeout < 1000 || timeout > 2147483647) errors.push('bashTimeoutMs must be 1000..2147483647');
     if (!Array.isArray(settings.hideOfficial) || settings.hideOfficial.some((item) => !HIDEABLE.has(item))) {
         errors.push('hideOfficial must be an array of pwsh/read/glob/grep/write/edit');
     }
     if (errors.length) throw new Error(errors.join('; '));
-    return { maxOutputChars: max, bashTimeoutMs: timeout, hideOfficial: [...new Set(settings.hideOfficial)] };
+    return { maxOutputChars: max, previewChars: preview, bashTimeoutMs: timeout, hideOfficial: [...new Set(settings.hideOfficial)] };
 }
 
 if (!name || name === 'list') {
@@ -92,4 +94,4 @@ console.log('applied.');
 
 const hideChanged = JSON.stringify(previous?.hideOfficial ?? null) !== JSON.stringify(next.hideOfficial);
 if (hideChanged) console.log('\nhideOfficial changed — restart the DSH desktop app for it to take effect.');
-else console.log('\noutput cap / bash timeout apply on the next tool call.');
+else console.log('\noutput cap / preview / bash timeout apply on the next tool call.');

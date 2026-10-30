@@ -12,9 +12,9 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor, Emu
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "deliverables" / "dsh-myops_使用手册_v2.2.2.docx"
+OUT = ROOT / "deliverables" / "dsh-myops_使用手册_v2.3.0.docx"
 
-VERSION = "2.2.2"
+VERSION = "2.3.0"
 TODAY = date.today().strftime("%Y-%m-%d")
 BODY_FONT_EA = "宋体"
 BODY_FONT = "Calibri"
@@ -303,7 +303,7 @@ def build() -> Path:
 
     heading(doc, "5.4 大输出与 ops_result", level=2)
     body(doc, "单次输出超过 maxOutputChars 时会落盘到 %TEMP%\\dsh-myops-spill\\，"
-              "模型只收到不超过 8000 字符的预览和 [full output id=…] 提示；"
+              "模型只收到预览（下限 previewChars=4000 字符，随上限按 1/4 增长）和 [full output id=…] 提示；"
               "用 ops_result(id, offset, limit) 翻页读取完整内容。对应临时目录在插件启动时清理 7 天前文件，"
               "写入时最多保留 200 条。")
 
@@ -326,6 +326,7 @@ def build() -> Path:
               [
                   ["配置档（直接选择）", "token-saver / balanced / generous / debug-official / quiet-code", "点击即应用"],
                   ["模型可见输出上限", "maxOutputChars（1,000 – 2,000,000）", "立即生效"],
+                  ["spill 预览下限", "previewChars（200 – 200,000，默认 4000）", "立即生效"],
                   ["ops_bash 默认超时", "bashTimeoutMs（1,000 – 2,147,483,647 毫秒）", "立即生效"],
                   ["屏蔽官方工具", "hideOfficial（pwsh/read/glob/grep/write/edit）", "重启生效"],
               ],
@@ -358,23 +359,24 @@ def build() -> Path:
     add_table(doc,
               ["默认项", "值", "效果"],
               [
-                  ["模型可见输出上限", "24000 字符", "超限时只回 ≤8k 字符预览 + ops_result id"],
+                  ["模型可见输出上限", "24000 字符", "超限时只回小预览 + ops_result id"],
+                  ["spill 预览下限", "4000 字符", "previewChars，随上限按 1/4 增长；可热调"],
                   ["ops_read 默认行数", "800", "3000 行文件返回约 8k 字符而不是约 60k"],
                   ["ops_glob 结果上限", "100", "限制最坏输出，与官方 glob 上限对齐"],
-                  ["ops_grep 匹配上限", "120", "限制最坏输出"],
+                  ["ops_grep 匹配上限", "120", "单行再截 200 字符"],
                   ["ops_bash 成功输出", "仅 stdout", "不再附加 exit code / 耗时"],
-                  ["hideOfficial", "6 个官方工具", "工具面只保留一套，减少每轮固定开销"],
+                  ["hideOfficial", "默认屏蔽 6 个", "工具面只保留一套，减少每轮固定开销"],
               ],
               widths=[5.0, 4.0, 6.8])
-    body(doc, "实测：9 个工具定义约 6411 字符（约 1801 tokens）/ 请求（精简前约 9098 字符 / 2527 tokens）；"
-              "大文件读取的模型可见输出从 59968 字符降到 8084 字符。")
+    body(doc, "实测：9 个工具定义约 5504 字符（约 1546 tokens）/ 请求（v2.2.2 前为 6411 字符；更早的精简前约 9098 字符）；"
+              "大文件读取的模型可见输出从 59968 字符降到约 6000 字符预览。")
 
     # ---------- 10. 测试 ----------
     heading(doc, "10. 测试与自检")
     body(doc, "插件内置两套无外部依赖的测试，修改代码后运行：")
     code_block(doc,
                "node test/smoke.mjs   # 34 项：注册、bash、写/改/查安全语义、去重、glob/grep、spill 翻页\n"
-               "node test/bench.mjs   # 65 项：延迟与输出成本、超时/进程树、cwd 绑定、参数、ops_git、设置页")
+               "node test/bench.mjs   # 67 项：延迟与输出成本、超时/进程树、cwd 绑定、参数、ops_git、设置页")
     body(doc, "bench 会写 test/bench-report.json。失败项对应关系：超时/残留 → 进程树终止；"
               "会话 cwd → resolveSessionCwd 接线；注册失败 → 语法/导入；设置项 → store 或路由；"
               "mode/exclude/stat 等 → 对应参数路径。")
@@ -392,6 +394,7 @@ def build() -> Path:
     add_table(doc,
               ["版本", "要点"],
               [
+                  ["2.3.0", "token 优化：默认屏蔽官方工具、描述精简、spill 预览可配（默认 4000）"],
                   ["2.2.2", "读去重按智能体隔离；ops_edit 支持 expectedRevision；ops_read 输出 rev"],
                   ["2.2.1", "ops_glob 结果上限 200 → 100，与官方 glob 对齐"],
                   ["2.2.0", "设置页新增配置档一键选择"],
@@ -427,7 +430,7 @@ def verify(path: Path) -> None:
     tables = doc.tables
     assert len(tables) == 6, f"expected 6 tables, got {len(tables)}"
     text = "\n".join(p.text for p in doc.paragraphs)
-    for needle in ["ops_bash", "24000", "token-saver", "hideOfficial", "8k 字符"]:
+    for needle in ["ops_bash", "24000", "token-saver", "hideOfficial", "previewChars"]:
         assert needle in text or any(needle in cell.text for table in tables for row in table.rows for cell in row.cells), f"missing text: {needle}"
     assert "9 个工具" in text
     print(f"OK {path.name}")
