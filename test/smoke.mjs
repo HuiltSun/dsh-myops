@@ -87,6 +87,14 @@ const dupBefore = readFileSync(dupFile, 'utf8');
 await expectError('edit rejects oldText repeated', () => T('ops_edit').execute({ path: dupFile, edits: [{ oldText: 'a', newText: 'z' }] }), 'times');
 ok('repeated-edit leaves file intact', readFileSync(dupFile, 'utf8') === dupBefore);
 
+// ops_edit 的 expectedRevision（CAS）：命中则改，失配则拒且不动文件。
+const editRev = /rev ([0-9a-f]+)/.exec(String(await T('ops_read').execute({ path: file })))?.[1];
+const casEdited = String(await T('ops_edit').execute({ path: file, expectedRevision: editRev, edits: [{ oldText: 'TWO', newText: 'two' }] }));
+ok('edit expectedRevision hits', readFileSync(file, 'utf8') === 'one\ntwo\nthree', casEdited);
+const casBefore = readFileSync(file, 'utf8');
+await expectError('edit expectedRevision rejects stale', () => T('ops_edit').execute({ path: file, expectedRevision: 'deadbeef', edits: [{ oldText: 'two', newText: 'TWO' }] }), 'revision mismatch');
+ok('stale edit leaves file intact', readFileSync(file, 'utf8') === casBefore);
+
 const stat = String(await T('ops_stat').execute({ path: file }));
 ok('stat file reports size/lines/sha256', /size:/.test(stat) && /lines:/.test(stat) && /sha256:/.test(stat), stat.split('\n').slice(0, 4).join(' | '));
 
@@ -106,6 +114,17 @@ ok('first read returns body', first.includes('1| one'), first.split('\n')[0]);
 ok('second read is de-duplicated', second.includes('unchanged since last read'), second.split('\n')[0]);
 const forced = String(await T('ops_read').execute({ path: file, force: true }));
 ok('force reprints body', forced.includes('1| one'));
+ok('full read exposes rev for CAS', /rev [0-9a-f]{8}/.test(forced), forced.split('\n')[0]);
+
+// 读去重必须按智能体隔离：A 读过的文件，B 首次读不能被当成 “unchanged”。
+const agentA = { id: 'smoke-a', session: { id: 'smoke-session-a' }, ctx: { get: () => undefined } };
+const agentB = { id: 'smoke-b', session: { id: 'smoke-session-b' }, ctx: { get: () => undefined } };
+const asExec = (agent) => ({ agent, signal: new AbortController().signal });
+const readAsA = String(await T('ops_read').execute({ path: bigRead }, asExec(agentA)));
+const readAsB = String(await T('ops_read').execute({ path: bigRead }, asExec(agentB)));
+ok('dedup state is per-agent (other agent sees body)', !readAsB.includes('content omitted') && readAsB.includes('1| row 1'), readAsB.split('\n')[0]);
+const readAsA2 = String(await T('ops_read').execute({ path: bigRead }, asExec(agentA)));
+ok('same agent still de-duplicates', readAsA2.includes('unchanged since last read'), readAsA2.split('\n')[0]);
 
 const empty = join(work, 'empty.txt');
 writeFileSync(empty, '');

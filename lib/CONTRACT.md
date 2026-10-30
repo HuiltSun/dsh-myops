@@ -53,9 +53,11 @@ export function buildWriteTools(deps = {}) // deps 目前为空，可忽略
   - 文件已存在且传了 `expectedRevision` 时必须匹配当前内容 sha256 前缀，否则报错。
   - `ifNotExists: true` 时文件已存在则报错。
   - 返回如 `Wrote 42 lines (1234 bytes) to E:/a/b.txt (rev 1a2b3c4d)`；`dryRun` 时返回计划不落盘。
-- `ops_edit`：`{ path, edits: [{ oldText, newText }], dryRun? }`
+- `ops_edit`：`{ path, edits: [{ oldText, newText }], dryRun?, expectedRevision? }`
   - 每个 `oldText` 必须**恰好出现一次**，0 次或多次都报错并说明次数。
   - 按顺序应用，全部成功才写盘（先算好新内容），返回每个编辑的起始行号与总行数变化。
+  - `expectedRevision` 与 `ops_write` 同义：先用当前内容 sha256 前缀校验，失配报 `revision mismatch` 且不写盘；
+    不带该参数时为 last-writer-wins（并发场景请显式传）。
 - `ops_stat`：`{ path }`
   - 文件：type/size/mtime/是否为文本/行数（<5MB 时）/sha256 前缀。
   - 目录：条目数、子目录数、总大小（只算一层）。
@@ -84,6 +86,8 @@ export function createReadDedup(options = {}) // { maxEntries? }
 - `observe(path, text)` → `{ unchanged, revision, previousRevision?, readCount }`
   - 键为规范化绝对路径（大小写不敏感）。
   - 内容 sha256 未变则 `unchanged: true`，并累计 `readCount`。
+  - 插件在 `index.mjs` 里按 owner（`agent.session.id` / `agent.id`）各建一个实例：
+    读去重状态**绝不跨智能体共享**，否则子智能体/队友读过即会让调用方看到假 `unchanged` 桩。
 - `forget(path)`、`reset()`、`size`。
 - 纯内存，LRU 上限默认 512。不要自己读文件，调用方传入已读内容。
 

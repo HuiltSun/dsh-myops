@@ -132,3 +132,14 @@ cd test/doc && node selftest.mjs # 文档解析自测
   修正了「大 glob 比被替换的官方工具更耗 token」的反向偏差。
 - 实测：500 文件全量 glob，输出 2559 → 1279 字符，单次省 ~1.3k 字符（≈360 token）。
 - 同步更新 README 默认值表、CHANGELOG、用户手册（v2.2.1）与版本号。
+
+## v2.2.2 补充（读写冲突修复）
+
+- **读去重按智能体隔离**：此前 `index.mjs` 只有一份全局 `createReadDedup`，子智能体/队友
+  读过某文件后，本体会读到 `content omitted` 桩。现按 `agent.session.id` / `agent.id`
+  分实例（LRU 64），同会话内去重不受影响；smoke 新增跨智能体断言。
+- **`ops_edit` 支持 `expectedRevision`**：与 `ops_write` 同语义的 sha256 前缀 CAS，
+  失配报 `revision mismatch` 且不写盘；此前“读完→他人修改→edit”会静默覆盖。
+- **`ops_read` 头部输出 `rev <8>`**：读→改→校验可直接把 rev 传给 `expectedRevision`，
+  不必再调 `ops_stat`。
+- smoke 28 → 34 项，bench 65 项全通过。

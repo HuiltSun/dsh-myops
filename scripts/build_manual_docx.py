@@ -12,9 +12,9 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor, Emu
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "deliverables" / "dsh-myops_使用手册_v2.2.1.docx"
+OUT = ROOT / "deliverables" / "dsh-myops_使用手册_v2.2.2.docx"
 
-VERSION = "2.2.1"
+VERSION = "2.2.2"
 TODAY = date.today().strftime("%Y-%m-%d")
 BODY_FONT_EA = "宋体"
 BODY_FONT = "Calibri"
@@ -266,11 +266,11 @@ def build() -> Path:
               ["工具", "用途"],
               [
                   ["ops_bash", "Git Bash 执行命令；超时终止进程树"],
-                  ["ops_read", "按行读取文本，offset/limit 翻页；全文重复读会去重"],
+                  ["ops_read", "按行读取文本，offset/limit 翻页；全文重复读会去重（按智能体隔离）"],
                   ["ops_glob", "按 glob 查找文件；stat=true 附带大小与 mtime"],
                   ["ops_grep", "正则搜索文件内容；include / exclude / 大小写"],
                   ["ops_write", "写 UTF-8 文件；dryRun、ifNotExists、expectedRevision"],
-                  ["ops_edit", "精确字符串替换；多块、原子、dryRun"],
+                  ["ops_edit", "精确字符串替换；多块、原子、dryRun、expectedRevision"],
                   ["ops_stat", "类型/大小/mtime/行数/sha256；paths 批量"],
                   ["ops_result", "分页读取 spill 的大输出"],
                   ["ops_git", "status / diff / log / show / branch / add / commit"],
@@ -291,14 +291,15 @@ def build() -> Path:
 
     heading(doc, "5.2 读取与搜索", level=2)
     bullet(doc, "：默认前 800 行；全文读取第二次返回 unchanged 提示，force=true 可强制重打；"
-                "windowed 读取总是返回内容。", "ops_read")
+                "windowed 读取总是返回内容；头部带文件 rev（sha256 前缀，可传给 expectedRevision）。"
+                "去重状态按智能体/会话隔离，子智能体不会把调用方的读取变成假 unchanged。", "ops_read")
     bullet(doc, "：include 是单个 glob，不会自动递归（用 **/*.mjs）；>5 MB 文件与二进制跳过；"
                 "exclude 是内容排除正则。", "ops_grep")
 
     heading(doc, "5.3 写入与修改", level=2)
     bullet(doc, "：dryRun 预演、createDirs、ifNotExists、expectedRevision（sha256 前缀）防止覆盖并发修改。", "ops_write")
     bullet(doc, "：每个 oldText 必须在文件中恰好出现一次；全部校验通过才落盘；支持多块编辑，"
-                "CRLF/CR 匹配前统一为 LF。", "ops_edit")
+                "CRLF/CR 匹配前统一为 LF；expectedRevision（sha256 前缀）可在并发修改时拒绝覆盖。", "ops_edit")
 
     heading(doc, "5.4 大输出与 ops_result", level=2)
     body(doc, "单次输出超过 maxOutputChars 时会落盘到 %TEMP%\\dsh-myops-spill\\，"
@@ -372,7 +373,7 @@ def build() -> Path:
     heading(doc, "10. 测试与自检")
     body(doc, "插件内置两套无外部依赖的测试，修改代码后运行：")
     code_block(doc,
-               "node test/smoke.mjs   # 28 项：注册、bash、写/改/查安全语义、去重、glob/grep、spill 翻页\n"
+               "node test/smoke.mjs   # 34 项：注册、bash、写/改/查安全语义、去重、glob/grep、spill 翻页\n"
                "node test/bench.mjs   # 65 项：延迟与输出成本、超时/进程树、cwd 绑定、参数、ops_git、设置页")
     body(doc, "bench 会写 test/bench-report.json。失败项对应关系：超时/残留 → 进程树终止；"
               "会话 cwd → resolveSessionCwd 接线；注册失败 → 语法/导入；设置项 → store 或路由；"
@@ -391,6 +392,7 @@ def build() -> Path:
     add_table(doc,
               ["版本", "要点"],
               [
+                  ["2.2.2", "读去重按智能体隔离；ops_edit 支持 expectedRevision；ops_read 输出 rev"],
                   ["2.2.1", "ops_glob 结果上限 200 → 100，与官方 glob 对齐"],
                   ["2.2.0", "设置页新增配置档一键选择"],
                   ["2.1.0", "token 优化：默认值下调、spill 小预览、bash 成功静默、描述精简"],

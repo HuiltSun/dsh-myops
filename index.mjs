@@ -49,6 +49,7 @@ import {
     MAX_GREP_MATCHES,
     DEFAULT_READ_LINES,
     OUTPUT,
+    hashText,
     resolveWorkdir,
     resolveSessionCwd,
 } from './lib/common.mjs';
@@ -496,12 +497,13 @@ async function readOneFile(filePath, offset, limit, base = process.cwd()) {
   const requested = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : DEFAULT_READ_LINES;
   const end = Math.min(lines.length, start + requested - 1);
   const slice = lines.slice(start - 1, end);
+  const revision = hashText(fullText);
   const width = String(Math.max(end, 1)).length;
   const numbered = slice
     .map((line, i) => `${String(start + i).padStart(Math.max(4, width))}| ${line}`)
     .join('\n');
   const windowed = start > 1 || end < lines.length;
-  const header = `File: ${toPosix(abs)} (${lines.length} lines, ${totalBytes} bytes)` +
+  const header = `File: ${toPosix(abs)} (${lines.length} lines, ${totalBytes} bytes, rev ${revision.slice(0, 8)})` +
     (windowed ? `, showing ${start}-${end}` : '');
   const hint = windowed && end < lines.length
     ? `\n[truncated: pass offset=${end + 1} to continue]`
@@ -510,6 +512,7 @@ async function readOneFile(filePath, offset, limit, base = process.cwd()) {
     abs: toPosix(abs),
     text: `${header}\n${numbered}${hint}`,
     fullText,
+    revision,
     isFullText: start === 1 && end === lines.length,
   };
 }
@@ -685,7 +688,30 @@ async function grepFiles(root, pattern, opts = {}) {
 /* ------------------------------------------------------------------ */
 
 function buildTools(ctx, deps) {
-  const { store, dedup } = deps;
+  const { store } = deps;
+  // 读去重状态必须按「会话/智能体」隔离：全局一份会让子智能体、队友或并行会话的
+  // 读取把别人读过的文件误判为 "unchanged since last read"，导致本智能体拿到
+  // 一行 "content omitted" 而根本没看过正文。最多保留 64 个 owner（LRU）。
+  const MAX_DEDUP_OWNERS = 64;
+  const dedups = new Map();
+  const dedupFor = (exec) => {
+    const agent = exec?.agent;
+    const owner = String(agent?.session?.id ?? agent?.id ?? 'default');
+    const cached = dedups.get(owner);
+    if (cached) {
+      dedups.delete(owner);
+      dedups.set(owner, cached);
+      return cached;
+    }
+    const state = createReadDedup({ maxEntries: 512 });
+    dedups.set(owner, state);
+    while (dedups.size > MAX_DEDUP_OWNERS) {
+      const oldest = dedups.keys().next();
+      if (oldest.done) break;
+      dedups.delete(oldest.value);
+    }
+    return state;
+  };
   const outputLimitNow = () => {
     const value = deps.settings?.read?.().maxOutputChars;
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : MAX_OUTPUT_CHARS;
@@ -754,7 +780,7 @@ function buildTools(ctx, deps) {
       // Only a whole-file read is worth de-duplicating: a windowed read is an
       // explicit request for that slice.
       if (info.isFullText && args?.force !== true) {
-        const seen = dedup.observe(info.abs, info.fullText);
+        const seen = dedupFor(exec).observe(info.abs, info.fullText);
         if (seen.unchanged) {
           return `File: ${info.abs} (unchanged since last read, rev ${seen.revision}, read #${seen.readCount})\n` +
             '[content omitted; pass force=true to print it]';
@@ -922,8 +948,7 @@ export function apply(ctx, config = {}) {
     },
   });
   const store = createSpillStore({ maxEntries: 200 });
-  const dedup = createReadDedup({ maxEntries: 512 });
-  const deps = { store, dedup, settings };
+  const deps = { store, settings };
 
   const definitions = [
     ...buildTools(ctx, deps),

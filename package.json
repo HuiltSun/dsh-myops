@@ -1,6 +1,6 @@
 {
   "name": "dsh-myops",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "Lightweight, zero-npm-dependency replacement for dsh-ops: Git Bash, compact read/glob/grep, write/edit/stat, paged spill output and read de-duplication for DSH on Windows. Document formats are handled by the /office skills.",
   "type": "module",
   "main": "index.mjs",

@@ -13,7 +13,7 @@ use the DSH **`/office` skill family** (`office-docx`, `office-xlsx`, `office-pp
 | `ops_glob` | Find files by glob pattern |
 | `ops_grep` | Search file contents with a regular expression |
 | `ops_write` | Write a file (`dryRun`, `createDirs`, `expectedRevision`, `ifNotExists`) |
-| `ops_edit` | Exact-match text replacement; atomic and rejects ambiguous matches |
+| `ops_edit` | Exact-match text replacement; atomic, rejects ambiguous matches, `dryRun`, `expectedRevision` |
 | `ops_stat` | Type / size / mtime / line count / sha256 |
 | `ops_result` | Page through spilled large output |
 | `ops_git` | Compact Git: status / diff / log / show / branch / add / commit (no push-history rewrites) |
@@ -60,7 +60,7 @@ backup paths, byte counts) plus the copied `dsh-myops/` folder and
 ## Test
 
 ```powershell
-node test/smoke.mjs   # 28 checks: registration, bash, write/edit/stat safety, dedup, glob/grep, spill paging
+node test/smoke.mjs   # 34 checks: registration, bash, write/edit/stat safety, dedup, glob/grep, spill paging
 node test/bench.mjs   # 65 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page (presets)
 ```
 
@@ -218,15 +218,23 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
   `%TEMP%\dsh-myops-spill\<id>.txt` and the model gets a small preview (≤8k chars) plus
   `[full output "ops_bash" id=…; call ops_result(id="…") to page]`.
   `ops_result` pages it back with `offset`/`limit`.
-- **`ops_read` de-duplicates.** A whole-file read whose content is unchanged since
-  the previous read returns
+- **`ops_read` de-duplicates per agent/session.** A whole-file read whose content is
+  unchanged since *this agent/session's* previous read returns
   `(unchanged since last read, rev …, read #N)` instead of the body; pass
   `force: true` to print it again. Windowed reads (`offset`/`limit`) always print.
+  Dedup state is never shared between agents: a subagent/teammate reading a file
+  cannot make the caller see a "content omitted" stub it never saw itself.
 - `ops_read` defaults to 800 lines and prints `[truncated: pass offset=N to continue]`,
   so reading a large log cannot flood the context in one call.
+- `ops_read` prints the whole-file sha256 as `rev <8>` in its header, so a
+  read → edit/write → verify flow can pass it straight to `expectedRevision`.
 - `ops_write` / `ops_edit` validate everything before touching disk and replace via
   a temp file + rename, so a failed call never leaves a half-written file.
-  `expectedRevision` (sha256 prefix from `ops_stat`) gives compare-and-swap safety.
+  Both accept `expectedRevision` (sha256 prefix from the `ops_read` header or
+  `ops_stat`) as a compare-and-swap guard: a stale prefix fails with
+  `revision mismatch … (file was modified since it was read; re-read it before writing)`.
+  Without `expectedRevision` the last writer wins silently, so pass it whenever the
+  file may be touched concurrently (teammates, subagents, `ops_bash`).
   `ops_edit` also supports `dryRun` and multiple replacements in one `edits` array.
   Both normalize CRLF/CR to LF before matching, so `oldText` may use LF even in a
   CRLF file — but the rewritten file uses LF line endings.

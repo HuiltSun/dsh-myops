@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.2.2 — 2026-10-31（读写冲突修复）
+
+- **读去重按智能体/会话隔离**（`ops_read`）：此前去重状态是全局一份，A（子智能体/队友）
+  读过某文件后，B 首次读会拿到 `content omitted` 桩——B 根本没看过正文。现在按
+  `agent.session.id` / `agent.id` 各建一份状态（LRU 64 个 owner），同会话内仍照常去重。
+- **`ops_edit` 新增 `expectedRevision`**：与 `ops_write` 相同的 sha256 前缀 CAS 守卫，
+  失配报 `revision mismatch … re-read it before editing` 且不写盘。此前 `ops_edit`
+  在“读完 → 他人改过 → 再 edit”时会静默吞掉他人的修改。
+- **`ops_read` 输出补全文件 `rev <8>`**（整文件 sha256 前缀），使
+  读 → 写/改 → 校验 流程可直接把该值传给 `expectedRevision`，无需额外 `ops_stat`。
+- smoke 28 → **34** 项（新增 CAS 命中/失配、跨智能体去重隔离、`rev` 输出断言）。
+
+---
+
 ## v2.2.1 — 2026-10-31（glob 上限对齐官方）
 
 - `ops_glob` 结果上限 **200 → 100**（`MAX_GLOB_RESULTS`），与官方 `glob` 的
