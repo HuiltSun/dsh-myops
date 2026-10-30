@@ -2,12 +2,12 @@
 
 - **时间**：2026-10-31 03:21–03:26（Asia/Shanghai）
 - **环境**：Windows / Node v26.8.1 / Git Bash；工作区 `E:\dsh-myops`；插件 v1.1.0 已装入 desktop profile 并在当前会话注册
-- **结论**：**12/12 工具在真实会话中可用；81/81 效率/回归用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测（见文末“修复后复测”与 v1.2.0–v1.5.0 补充）。
+- **结论**：**9/9 工具在真实会话中可用；64/64 效率/回归用例通过；回归 0 失败**。首轮发现的超时问题与会话 cwd 问题已修复并复测；文档类工具已在 v2.0.0 移除（见文末）。
 
 ## 验证方法
 
-1. **进程内基准**（`node test/bench.mjs`，新增）：用伪 ctx 调 `apply()` 注册全部工具后，逐工具跑真实负载，记录 `execute()` 中位耗时（`performance.now`，不含模型往返与宿主 IPC）和**模型可见输出字符数**（上下文成本）。60 个用例覆盖正常路径、分页、去重、CAS、错误路径、6 个 PDF fixture、超时进程树清理、11 个会话 cwd 绑定与 header 兜底、v1.2.0 新参数。
-2. **会话内实测**：11 个工具各走真实注册路径调用一次，确认安装版本可用、输出符合契约。
+1. **进程内基准**（`node test/bench.mjs`，新增）：用伪 ctx 调 `apply()` 注册全部工具后，逐工具跑真实负载，记录 `execute()` 中位耗时（`performance.now`，不含模型往返与宿主 IPC）和**模型可见输出字符数**（上下文成本）。64 个用例覆盖正常路径、分页、去重、CAS、错误路径、超时进程树清理、会话 cwd 绑定与 header 兜底、新参数与设置页。
+2. **会话内实测**：9 个工具各走真实注册路径调用一次，确认安装版本可用、输出符合契约。
 3. **回归**：`node test/smoke.mjs` → 31 passed / 0 failed；`node test/doc/selftest.mjs` → 0 failures。
 
 ## 逐工具结果
@@ -76,7 +76,14 @@ cd test/doc && node selftest.mjs # 文档解析自测
 
 ### 3. 回归
 
-`node test/bench.mjs` 81/81、`node test/smoke.mjs` 31/31、`test/doc/selftest.mjs` 0 失败。
+`node test/bench.mjs` 64/64、`node test/smoke.mjs` 28/28。
+
+## v2.0.0 补充（移除文档类工具）
+
+- 按用户要求放弃 `ops_read_table` / `ops_read_docx` / `ops_read_pdf`，文档处理改由 DSH 的 `/office` 技能系列承担（`office-docx` / `office-xlsx` / `office-pptx` / `office-render` / `office-export-pdf`）。
+- 删除 `lib/doc-tools.mjs`、`lib/vendor/pdfjs/`（pdf.js 4.10.38）、`test/doc/`（全部 fixture 与 `selftest.mjs`）、`scripts/` 下的 PDF→DOCX 脚本。
+- bench 新增 2 个回归项：`文档类 ops 不再注册`、`文档解析代码已删除`；其余用例（bash/read/glob/grep/write/edit/stat/result/git、设置页、超时、cwd）全部保留并通过。
+- 历史上方逐工具表包含已移除工具的数据，仅作记录，不再属于当前工具面。
 
 ## v1.5.0 补充（Mozilla pdf.js）
 

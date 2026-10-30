@@ -14,7 +14,7 @@
 
 import { execFileSync } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -24,7 +24,6 @@ import { createSettingsStore, normalizeSettings } from '../lib/settings-store.mj
 import { createSettingsRoute } from '../lib/settings-route.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DOC = join(HERE, 'doc');
 
 const defs = new Map();
 const SESSION_CWD_PROVIDER = {
@@ -175,15 +174,15 @@ const midTxt = join(work, 'mid.txt');
 writeFileSync(midTxt, Array.from({ length: 300 }, (_, i) => `line ${i + 1} :: ${'y'.repeat(60)}`).join('\n'));
 const oneTxt = join(work, 'one.txt');
 writeFileSync(oneTxt, 'alpha\nbeta\ngamma\n');
-const bigCsv = join(work, 'big.csv');
-writeFileSync(bigCsv, 'id,name,note\n' + Array.from({ length: 500 }, (_, i) => `${i + 1},name ${i + 1},"note, ${i + 1}"`).join('\n') + '\n');
+const emptyFile = join(work, 'empty.txt');
+writeFileSync(emptyFile, '');
 
 /* ------------------------------------------------------------------ */
 /* 0. 注册                                                             */
 /* ------------------------------------------------------------------ */
 const EXPECTED = [
   'ops_bash', 'ops_read', 'ops_glob', 'ops_grep', 'ops_write', 'ops_edit',
-  'ops_stat', 'ops_result', 'ops_read_table', 'ops_read_docx', 'ops_read_pdf', 'ops_git',
+  'ops_stat', 'ops_result', 'ops_git',
 ];
 const missing = EXPECTED.filter((n) => !defs.has(n));
 if (missing.length) failures.push(`registration missing: ${missing.join(', ')}`);
@@ -258,7 +257,7 @@ await bench('ops_read', '窗口读 offset/limit', { path: bigTxt, offset: 1000, 
   reps: 5,
   check: (t) => (t.includes('showing 1000-1019') && t.includes('1000|') ? true : 'bad window'),
 });
-await bench('ops_read', '空文件', { path: join(DOC, 'empty.csv') }, {
+await bench('ops_read', '空文件', { path: emptyFile }, {
   reps: 1,
   check: (t) => (t.includes('(0 lines') ? true : 'expected 0 lines'),
 });
@@ -271,9 +270,9 @@ await bench('ops_glob', '**/*.mjs（当前工作区）', { pattern: '**/*.mjs', 
   reps: 5,
   check: (t) => (t.includes('index.mjs') ? true : 'index.mjs not found'),
 });
-await bench('ops_glob', 'test/doc/*.pdf', { pattern: '*.pdf', path: DOC }, {
+await bench('ops_glob', 'README/CHANGELOG 列表', { pattern: '*.md', path: process.cwd() }, {
   reps: 5,
-  check: (t) => (t.includes('simple.pdf') && !t.includes('.git') ? true : 'pdf glob wrong'),
+  check: (t) => (t.includes('README.md') && t.includes('CHANGELOG.md') ? true : 'markdown glob wrong'),
 });
 await bench('ops_glob', 'stat=true 返回元信息', { pattern: '*.md', path: process.cwd(), stat: true }, {
   reps: 3,
@@ -329,7 +328,7 @@ await bench('ops_stat', '文件 stat', { path: midTxt }, {
   reps: 5,
   check: (t) => (/lines: 300/.test(t) && /sha256: [0-9a-f]{8,}/.test(t) ? true : 'bad stat'),
 });
-await bench('ops_stat', '目录 stat', { path: DOC }, {
+await bench('ops_stat', '目录 stat', { path: work }, {
   reps: 3,
   check: (t) => (/entries:/.test(t) ? true : 'bad dir stat'),
 });
@@ -353,63 +352,13 @@ if (spillId) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 9. ops_read_table / 10. ops_read_docx / 11. ops_read_pdf            */
+/* 9. 文档类工具已移除（改用 /office 系列技能）                          */
 /* ------------------------------------------------------------------ */
-await bench('ops_read_table', 'CSV 引号/逗号', { path: join(DOC, 'people.csv') }, {
-  reps: 5,
-  check: (t) => (t.includes('delimiter=, (auto)') && t.includes('likes commas') ? true : 'quoted comma lost'),
-});
-await bench('ops_read_table', '500 行 CSV（默认 50 行 + 翻页提示）', { path: bigCsv }, {
-  reps: 5,
-  check: (t) => (t.includes('offset=51') ? true : 'paging hint missing'),
-});
-await bench('ops_read_table', 'TSV 自动推断', { path: join(DOC, 'items.tsv') }, {
-  reps: 5,
-  check: (t) => (t.includes('delimiter=\\t (auto)') ? true : 'tab not inferred'),
-});
-await bench('ops_read_table', '空 CSV 说明', { path: join(DOC, 'empty.csv') }, {
-  reps: 3,
-  check: (t) => (t.includes('table is empty') ? true : 'no empty notice'),
-});
-
-await bench('ops_read_docx', 'min.docx（deflate）', { path: join(DOC, 'min.docx') }, {
-  reps: 5,
-  check: (t) => (t.includes('DOCX') && t.includes('中文测试') ? true : 'paragraph/CJK missing'),
-});
-await bench('ops_read_docx', 'stored.docx（无压缩）', { path: join(DOC, 'stored.docx') }, {
-  reps: 5,
-  check: (t) => (t.includes('Myops Docx Test') ? true : 'stored zip not parsed'),
-});
-await bench('ops_read_docx', 'fake.docx（非 zip）', { path: join(DOC, 'fake.docx') }, {
-  reps: 3,
-  check: (t) => (/error/i.test(t) ? true : 'no readable error'),
-});
-
-const PDF_CASES = [
-  ['simple.pdf', (t) => (t.includes('Hello PDF') ? true : 'Tj text missing')],
-  ['tounicode.pdf', (t) => (t.includes('学生') ? true : 'ToUnicode decode missing')],
-  ['objstm.pdf', (t) => (t.includes('学生') ? true : 'ObjStm font map missing')],
-  ['scanned.pdf', (t) => (/unsupported/.test(t) && /text layer/.test(t) ? true : 'scan not reported')],
-  ['encrypted.pdf', (t) => (/unsupported/.test(t) && /encrypted/.test(t) ? true : 'encryption not reported')],
-  ['cid-nomap.pdf', (t) => (/unsupported/.test(t) && !/[^\x00-\x7F]/.test(t.split('\n')[0]) ? true : 'garbage/unsupported wrong')],
-];
-for (const [pdf, check] of PDF_CASES) {
-  await bench('ops_read_pdf', pdf, { path: join(DOC, pdf) }, { reps: 5, check });
-}
 {
-  let pdfjsOk = false;
-  try {
-    const mod = await import('../lib/vendor/pdfjs/pdf.mjs');
-    pdfjsOk = typeof mod.getDocument === 'function';
-  } catch { /* not vendored */ }
-  checkOnly('ops_read_pdf', 'vendored pdf.js 可加载', pdfjsOk, 'pdf.js module not loadable');
-  await bench('ops_read_pdf', 'pdf.js 逐行重建', { path: join(DOC, 'simple.pdf') }, {
-    reps: 1,
-    check: (t) => (t.includes('1| Hello PDF') && t.includes('2| Second line') && t.includes('4| line three')
-      ? true : 'line reconstruction wrong'),
-  });
-  const withPassword = String(await T('ops_read_pdf').execute({ path: join(DOC, 'encrypted.pdf'), password: 'wrong' }));
-  checkOnly('ops_read_pdf', 'password 参数可传入', /unsupported|error/i.test(withPassword), withPassword.split('\n')[0]);
+  const removed = ['ops_read_table', 'ops_read_docx', 'ops_read_pdf'];
+  checkOnly('registration', '文档类 ops 不再注册', removed.every((name) => !defs.has(name)), removed.join(','));
+  const leftover = ['doc-tools.mjs', 'vendor/pdfjs'].filter((name) => existsSync(join(HERE, '..', 'lib', name)));
+  checkOnly('registration', '文档解析代码已删除', leftover.length === 0, leftover.join(','));
 }
 
 /* ------------------------------------------------------------------ */
@@ -557,9 +506,6 @@ const cwdDir = join(work, 'session-cwd');
 mkdirSync(cwdDir, { recursive: true });
 writeFileSync(join(cwdDir, 'rel.txt'), 'rel-needle line\nsecond\n');
 writeFileSync(join(cwdDir, 'cwd-marker.cwd'), 'marker\n');
-writeFileSync(join(cwdDir, 't.csv'), 'a,b\n1,2\n');
-copyFileSync(join(DOC, 'min.docx'), join(cwdDir, 'd.docx'));
-copyFileSync(join(DOC, 'simple.pdf'), join(cwdDir, 'p.pdf'));
 const norm = (p) => String(p).replace(/\\/g, '/').toLowerCase();
 SESSION_DIR = cwdDir;
 
@@ -567,9 +513,9 @@ await bench('ops_bash', '会话 cwd：pwd -W', { command: 'pwd -W' }, {
   reps: 1, exec: agentExec,
   check: (t) => (norm(t).includes(norm(cwdDir)) ? true : `pwd not session cwd: ${t.split('\n')[0]}`),
 });
-await bench('ops_bash', '显式 workdir 覆盖会话 cwd', { command: 'pwd -W', workdir: DOC }, {
+await bench('ops_bash', '显式 workdir 覆盖会话 cwd', { command: 'pwd -W', workdir: work }, {
   reps: 1, exec: agentExec,
-  check: (t) => (norm(t).includes(norm(DOC)) ? true : `workdir override failed: ${t.split('\n')[0]}`),
+  check: (t) => (norm(t).includes(norm(work)) ? true : `workdir override failed: ${t.split('\n')[0]}`),
 });
 await bench('ops_read', '会话 cwd：相对路径', { path: 'rel.txt' }, {
   reps: 1, exec: agentExec,
@@ -594,18 +540,6 @@ await bench('ops_edit', '会话 cwd：相对编辑', { path: 'out/w.txt', edits:
 await bench('ops_stat', '会话 cwd：相对 stat', { path: 'out/w.txt' }, {
   reps: 1, exec: agentExec,
   check: (t) => (norm(t).includes(norm(cwdDir)) && /lines: 2/.test(t) ? true : 'relative stat missed session cwd'),
-});
-await bench('ops_read_table', '会话 cwd：相对 CSV', { path: 't.csv' }, {
-  reps: 1, exec: agentExec,
-  check: (t) => (t.includes('a') && t.includes('b') ? true : 'relative csv missed session cwd'),
-});
-await bench('ops_read_docx', '会话 cwd：相对 docx', { path: 'd.docx' }, {
-  reps: 1, exec: agentExec,
-  check: (t) => (t.includes('DOCX') ? true : 'relative docx missed session cwd'),
-});
-await bench('ops_read_pdf', '会话 cwd：相对 pdf', { path: 'p.pdf' }, {
-  reps: 1, exec: agentExec,
-  check: (t) => (t.includes('Hello PDF') ? true : 'relative pdf missed session cwd'),
 });
 {
   // 没有 workingDirectory 服务时，退回到 Session header 的 cwd

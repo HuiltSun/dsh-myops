@@ -39,7 +39,6 @@
 | `lib/write-tools.mjs` | 子智能体 A | `buildWriteTools(deps)` → `ops_write`、`ops_edit`、`ops_stat` |
 | `lib/output-spill.mjs` | 子智能体 B | `createSpillStore(options)`、`buildResultTool(store)` → `ops_result` |
 | `lib/read-dedup.mjs` | 子智能体 C | `createReadDedup(options)` |
-| `lib/doc-tools.mjs` | 子智能体 D | `buildDocTools(deps)` → `ops_read_table`、`ops_read_docx`、`ops_read_pdf` |
 
 ## 各模块接口
 
@@ -88,18 +87,7 @@ export function createReadDedup(options = {}) // { maxEntries? }
 - `forget(path)`、`reset()`、`size`。
 - 纯内存，LRU 上限默认 512。不要自己读文件，调用方传入已读内容。
 
-### D. `lib/doc-tools.mjs`
+### D. 文档类工具（已移除）
 
-```js
-export function buildDocTools(deps = {})
-```
-
-- `ops_read_table`：CSV/TSV。参数 `{ path, delimiter?, limit?, offset? }`，
-  自动推断分隔符（`,` `\t` `;`），处理引号包裹，返回对齐表格或 `col: value` 列表。
-- `ops_read_docx`：解析 docx（zip）里的 `word/document.xml`，提取段落文本。
-  参数 `{ path, limit? }`。必须用 `node:zlib` 的 `inflateRaw` 自行解析 zip
-  （中央目录 + 本地头），支持 stored/deflate 两种压缩。
-- `ops_read_pdf`：尽力提取 PDF 文本层。参数 `{ path, limit? }`。
-  解析 `FlateDecode` 流并抽取 `Tj`/`TJ` 文本。**做不到时不要抛未处理异常**，
-  返回说明性字符串（例如 `PDF text extraction unsupported for this file: <原因>`）。
-- 三者都不允许 npm 依赖；二进制输入要给出可读错误。
+`ops_read_table` / `ops_read_docx` / `ops_read_pdf` 已从插件移除。文档（CSV、DOCX、
+XLSX、PPTX、PDF）统一交给 DSH 的 `/office` 系列技能处理；插件只负责代码/文本工具。

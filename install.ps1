@@ -176,6 +176,16 @@ foreach ($dir in $Directories) {
     # 复制目录内容而不是目录本身，避免出现 lib\lib 嵌套
     Copy-Item (Join-Path $srcDir '*') $dstDir -Recurse -Force
 }
+
+# 移除历史版本安装残留（v2.0.0 删除了文档类工具）：避免 profile 里留下不再使用的死代码
+$Obsolete = @('lib\doc-tools.mjs', 'lib\vendor')
+foreach ($rel in $Obsolete) {
+    $leftover = Join-Path $Target $rel
+    if (Test-Path $leftover) {
+        Remove-Item -Recurse -Force $leftover
+        Write-Host "已移除废弃文件: $leftover"
+    }
+}
 Write-Host "已复制插件到 $Target"
 
 if (-not (Test-Path $PatchFile)) {
@@ -193,4 +203,4 @@ if ($text -match '(?m)^# dsh-myops:') {
 Write-Host ""
 if ($backupDir) { Write-Host "旧版已备份到: $backupDir" }
 Write-Host "安装完成。重启 DSH 桌面端后开新会话即可使用。"
-Write-Host "工具: ops_bash, ops_read, ops_glob, ops_grep, ops_write, ops_edit, ops_stat, ops_result, ops_read_table, ops_read_docx, ops_read_pdf, ops_git"
+Write-Host "工具: ops_bash, ops_read, ops_glob, ops_grep, ops_write, ops_edit, ops_stat, ops_result, ops_git"

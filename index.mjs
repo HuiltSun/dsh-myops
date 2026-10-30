@@ -10,9 +10,11 @@
  *   - ops_edit       : exact-match text replacements (atomic, rejects ambiguous matches)
  *   - ops_stat       : type / size / mtime / line count / sha256
  *   - ops_result     : page through spilled large output
- *   - ops_read_table : CSV / TSV
- *   - ops_read_docx  : DOCX paragraphs
- *   - ops_read_pdf   : PDF text layer (best effort, never returns mojibake)
+ *   - ops_git        : compact Git status / diff / log / show / branch / add / commit
+ *
+ * Document formats (CSV / DOCX / XLSX / PPTX / PDF) are intentionally NOT part of
+ * this plugin: use the /office skill family (office-docx, office-xlsx, office-pptx,
+ * office-render, office-export-pdf) for document work.
  *
  * A cordis plugin: exports `name`, `inject` and `apply(ctx)`. Tools are plain
  * objects registered through `ctx.tools.register(...)` (the same contract dsh-ops
@@ -53,7 +55,6 @@ import {
 import { createSpillStore, buildResultTool } from './lib/output-spill.mjs';
 import { createReadDedup } from './lib/read-dedup.mjs';
 import { buildWriteTools } from './lib/write-tools.mjs';
-import { buildDocTools } from './lib/doc-tools.mjs';
 import { buildGitTools } from './lib/git-tools.mjs';
 import { createSettingsStore } from './lib/settings-store.mjs';
 import { createSettingsRoute } from './lib/settings-route.mjs';
@@ -946,7 +947,6 @@ export function apply(ctx, config = {}) {
     ...buildTools(ctx, deps),
     ...buildWriteTools({ ...deps, ctx }),
     ...buildResultTool(store),
-    ...buildDocTools({ ...deps, ctx }),
     ...buildGitTools({ ...deps, ctx }),
   ];
 

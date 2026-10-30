@@ -53,9 +53,9 @@ const work = mkdtempSync(join(tmpdir(), 'myops-smoke-'));
 console.log('--- registration ---');
 const expected = [
   'ops_bash', 'ops_read', 'ops_glob', 'ops_grep', 'ops_write', 'ops_edit',
-  'ops_stat', 'ops_result', 'ops_read_table', 'ops_read_docx', 'ops_read_pdf', 'ops_git',
+  'ops_stat', 'ops_result', 'ops_git',
 ];
-ok('all 12 tools registered', expected.every((n) => defs.has(n)), [...defs.keys()].join(','));
+ok('all 9 tools registered', expected.every((n) => defs.has(n)), [...defs.keys()].join(','));
 
 console.log('--- ops_bash ---');
 const bashOut = String(await T('ops_bash').execute({ command: 'echo SMOKE_OK; pwd' }));
@@ -132,22 +132,6 @@ if (id) {
   ok('ops_result pages to the end', page.includes('39999|') && page.includes('40000|'), page.split('\n').slice(0, 4).join(' | '));
   await expectError('ops_result rejects unknown id', () => T('ops_result').execute({ id: 'deadbeef' }), 'unknown output id');
 }
-
-console.log('--- ops_read_table / docx / pdf ---');
-const csv = join(work, 'a.csv');
-writeFileSync(csv, 'name,note\n"Zhang, S","says ""hi"""\nLi,plain\n');
-const tableOut = String(await T('ops_read_table').execute({ path: csv }));
-ok('csv handles quoted commas', tableOut.includes('Zhang, S') && tableOut.includes('says "hi"'), tableOut.split('\n').slice(0, 3).join(' | '));
-
-const notDocx = join(work, 'not.docx');
-writeFileSync(notDocx, 'plain text');
-const docxErr = String(await T('ops_read_docx').execute({ path: notDocx }));
-ok('docx on non-zip is readable error', /error/i.test(docxErr), docxErr.split('\n')[0]);
-
-const notPdf = join(work, 'not.pdf');
-writeFileSync(notPdf, 'plain text');
-const pdfErr = String(await T('ops_read_pdf').execute({ path: notPdf }));
-ok('pdf on non-pdf is readable error', /error|unsupported/i.test(pdfErr), pdfErr.split('\n')[0]);
 
 console.log('');
 console.log(`SUMMARY: ${pass} passed, ${fail} failed`);

@@ -1,7 +1,7 @@
 {
   "name": "dsh-myops",
-  "version": "1.5.0",
-  "description": "Lightweight, zero-npm-dependency replacement for dsh-ops: Git Bash, compact read/glob/grep, write/edit/stat, paged spill output, read de-duplication, CSV/DOCX readers and PDF text extraction via vendored pdf.js for DSH on Windows.",
+  "version": "2.0.0",
+  "description": "Lightweight, zero-npm-dependency replacement for dsh-ops: Git Bash, compact read/glob/grep, write/edit/stat, paged spill output and read de-duplication for DSH on Windows. Document formats are handled by the /office skills.",
   "type": "module",
   "main": "index.mjs",
   "exports": {
@@ -38,9 +38,7 @@
     "dsh-plugin",
     "deepseek-harness",
     "bash",
-    "file-tools",
-    "pdf",
-    "docx"
+    "file-tools"
   ],
   "license": "MIT"
 }

@@ -1,9 +1,10 @@
 # dsh-myops
 
 A small, **dependency-free** replacement for [`dsh-ops`](https://github.com/T-Auto/dsh-ops).
-It gives DSH twelve tools and needs no npm packages and no native binaries. The only
-third-party code is Mozilla **pdf.js** (Apache-2.0, vendored under
-`lib/vendor/pdfjs/` for `ops_read_pdf`; see its `PROVENANCE.md`).
+It gives DSH nine tools and needs no npm packages and no native binaries.
+Document formats (CSV / DOCX / XLSX / PPTX / PDF) are deliberately out of scope —
+use the DSH **`/office` skill family** (`office-docx`, `office-xlsx`, `office-pptx`,
+`office-render`, `office-export-pdf`) for document work.
 
 | Tool | Purpose |
 | --- | --- |
@@ -15,9 +16,6 @@ third-party code is Mozilla **pdf.js** (Apache-2.0, vendored under
 | `ops_edit` | Exact-match text replacement; atomic and rejects ambiguous matches |
 | `ops_stat` | Type / size / mtime / line count / sha256 |
 | `ops_result` | Page through spilled large output |
-| `ops_read_table` | CSV / TSV with quote handling |
-| `ops_read_docx` | DOCX paragraph text (no npm deps; own ZIP reader) |
-| `ops_read_pdf` | PDF text layer via vendored **pdf.js** (built-in parser fallback); `password` for encrypted PDFs; no OCR |
 | `ops_git` | Compact Git: status / diff / log / show / branch / add / commit (no push-history rewrites) |
 
 It is a plain cordis plugin: `package.json` → `index.mjs`, which exports
@@ -62,8 +60,8 @@ backup paths, byte counts) plus the copied `dsh-myops/` folder and
 ## Test
 
 ```powershell
-node test/smoke.mjs   # 31 checks: registration, bash, write/edit/stat safety, dedup, glob/grep, spill paging, doc error paths
-node test/bench.mjs   # 81 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page, pdf.js
+node test/smoke.mjs   # 28 checks: registration, bash, write/edit/stat safety, dedup, glob/grep, spill paging
+node test/bench.mjs   # 64 checks: per-tool latency/output cost, timeout stability, process-tree cleanup, session-cwd binding, new params, ops_git, settings page
 ```
 
 `test/bench.mjs` also writes `test/bench-report.json`. Exit code 0 means everything passed.
@@ -76,7 +74,7 @@ What a bench failure means (newcomers):
 | any `会话 cwd：…` case | `resolveSessionCwd` wiring (wrong path resolution source) |
 | `registration missing` | plugin failed to register (syntax/import error) |
 | `config maxOutputChars 生效` | plugin config not threaded into `store.present` |
-| a document case (`*.docx`/`*.pdf`/`*.csv`) | parser regression or fixture change |
+| a settings case (`settings …`) | settings store / route wiring |
 | a `mode=` / `exclude` / `stat=` case | the corresponding HTTP-free parameter path |
 
 ## Enable tool replacement (hide official tools)
@@ -160,7 +158,7 @@ localhost Host headers, same-origin requests and JSON bodies (no credentials).
 - Bash execution first tries the DSH `subprocess` service (so policy and
   cancellation apply) and falls back to a direct `child_process.spawn`.
 - **Relative paths resolve against the session working directory.** Every path
-tool (read/glob/grep/write/edit/stat/read_table/docx/pdf) and the default bash
+tool (read/glob/grep/write/edit/stat/git) and the default bash
 `workdir` use the DSH `workingDirectory` service (`ctx.workingDirectory.ensure(agent)`),
 falling back to `process.cwd()` only when no session exists. Explicit `workdir`
 and absolute paths still win. The plugin never resolves against the host
@@ -203,17 +201,9 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
   when a new entry is written (oldest first). Crash leftovers therefore do not grow
   without bound, but there is no background sweeper; `maxAgeMs`/`maxEntries` are
   `createSpillStore` options, not plugin config.
-- `ops_read_table` decodes UTF-8 only. Invalid UTF-8 (e.g. a GBK/GB2312 CSV) is
-  reported as `ops_read_table error: file is not valid UTF-8 text …` instead of
-  mojibake. Delimiters `,` `\t` `;` `|` are auto-detected or set via `delimiter`.
-- `ops_read_docx` reports encrypted/password-protected packages as
-  `document is encrypted/password-protected`, and reads only `word/document.xml`
-  (no headers, footers, footnotes or table structure). Legacy `.doc` is unsupported.
-- `ops_read_pdf` uses **Mozilla pdf.js** (vendored legacy build, `lib/vendor/pdfjs/`)
-  for the text layer: real-world fonts, line reconstruction and encrypted PDFs with
-  the `password` parameter. If pdf.js is missing or rejects the file, the built-in
-  hand-written parser runs and finally returns a readable `unsupported` message
-  instead of garbled text. Scanned/image-only PDFs are not OCR'd.
+- Document formats (CSV / DOCX / XLSX / PPTX / PDF) are intentionally not handled by
+  this plugin; use the DSH `/office` skills (`office-docx`, `office-xlsx`,
+  `office-pptx`, `office-render`, `office-export-pdf`) instead.
 - `ops_glob` / `ops_grep` skip `.git` and `node_modules`; symlinks are not followed.
 - `ops_glob` returns relative paths only by default. Pass `stat: true` to append
   `(size bytes, ISO mtime)` per match (one extra `stat` per file).
@@ -231,11 +221,6 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
   `--stat`, `add`/`commit` only touch explicit `paths`. Push and history-changing
   commands are intentionally left to `ops_bash`.
 - Empty files report `0 lines` consistently in both `ops_read` and `ops_stat`.
-- PDF analysis: pdf.js is vendored (Apache-2.0) with only the legacy `pdf.mjs` and
-  `pdf.worker.mjs`; its optional `cmaps/` and `standard_fonts/` data are not shipped,
-  so rarely some CJK glyphs may fall back to the hand-written parser or be
-  unreadable. Encrypted PDFs need the `password` parameter (no interactive prompt),
-  and scanned PDFs have no text layer (no OCR).
 
 - **Runtime settings + Desktop page.** `lib/settings-store.mjs` persists
   `maxOutputChars`/`bashTimeoutMs`/`hideOfficial` to `$DSH_HOME/myops-settings.json`
@@ -253,13 +238,8 @@ Measured: `timeoutMs=800` returns in 916–925 ms with no `sleep.exe` left behin
   plugin start (7-day TTL) and on write (max 200 entries), not periodically.
 - `ops_grep` is pure JavaScript (no ripgrep): fine for normal repos, slower on
   very large trees. Files >5 MB are skipped entirely; one file is read at a time.
-- `ops_read_table` assumes UTF-8 (no encoding parameter); GBK/GB2312 files produce
-  a readable error, not a decoded table.
-- `ops_read_docx` reads `word/document.xml` only (no headers/footers, no table
-  structure); legacy `.doc` is unsupported; encrypted packages are not decrypted.
-- `ops_read_pdf` needs `lib/vendor/pdfjs/pdf.mjs` + `pdf.worker.mjs` (shipped);
-  without them only the hand-written parser is used. No OCR; encrypted files need
-  an explicit `password`.
+- Document formats (CSV / DOCX / XLSX / PPTX / PDF) are not handled here; delegate
+  to the DSH `/office` skill family.
 - The settings page requires a DSH Web/Desktop profile that mounts the `webServer`
   service; on hosts without it the tools still work and settings can be edited in
   `myops-settings.json` directly. The `client.js` half only loads after a DSH

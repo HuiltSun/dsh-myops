@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.0.0 — 2026-10-31（破坏性变更：移除文档类工具）
+
+### 移除
+
+- 删除 **`ops_read_table` / `ops_read_docx` / `ops_read_pdf`** 三个工具及其实现：
+  - `lib/doc-tools.mjs`（CSV/DOCX/PDF 解析器）；
+  - `lib/vendor/pdfjs/`（vendored Mozilla pdf.js 4.10.38，含 LICENSE/PROVENANCE）；
+  - `test/doc/`（全部 fixture 与 `selftest.mjs`）；
+  - `scripts/extract_pdf_text.mjs`、`scripts/build_pdf_docx.py`（PDF→DOCX 一次性脚本）。
+- 文档处理改由 DSH 的 **`/office` 系列技能**负责：`office-docx`、`office-xlsx`、
+  `office-pptx`、`office-render`、`office-export-pdf`（必要时配合 `office-recalculate`）。
+
+### 保留
+
+- 插件仍提供 9 个工具：`ops_bash`、`ops_read`、`ops_glob`、`ops_grep`、`ops_write`、
+  `ops_edit`、`ops_stat`、`ops_result`、`ops_git`；设置页、会话 cwd 绑定、进程树终止等
+  v1.x 能力不受影响。
+
+### 测试
+
+- `test/bench.mjs` 64 项（新增“文档类 ops 不再注册”“文档解析代码已删除”回归项），
+  `test/smoke.mjs` 28 项；文档 fixture 自测随工具移除而删除。
+
+---
+
 ## v1.5.0 — 2026-10-31
 
 ### PDF：接入 Mozilla pdf.js
