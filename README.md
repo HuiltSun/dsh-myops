@@ -122,6 +122,19 @@ tools read it on every call (cached by mtime), so `maxOutputChars` and
 `bashTimeoutMs` changes apply immediately without a restart. `hideOfficial` is the
 exception — it is applied when the plugin loads, so toggling it needs a DSH restart.
 
+### 配置档（presets）
+
+`configs/myops-presets.json` 提供 5 个可直接切换的配置档：
+
+```bash
+node scripts/apply-preset.mjs list            # 列出所有配置档
+node scripts/apply-preset.mjs balanced        # 应用（token-saver/balanced/generous/debug-official/quiet-code）
+node scripts/apply-preset.mjs balanced --dry-run
+```
+
+脚本会先备份当前文件，再写入 `$DSH_HOME/myops-settings.json`；
+`maxOutputChars` / `bashTimeoutMs` 下一次工具调用生效，`hideOfficial` 需重启 DSH。
+
 ## Token efficiency
 
 The defaults are tuned so tool results stay small; every value is adjustable in
